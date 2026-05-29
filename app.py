@@ -29,7 +29,6 @@ PLATFORM_ICONS = {
 }
 
 # --- 1. PAGE SETUP & MEMORY ---
-# Added initial_sidebar_state="expanded" so it always opens by default
 st.set_page_config(page_title="Reolink Command Center", page_icon="📹", layout="wide", initial_sidebar_state="expanded")
 
 # Modern HTML/CSS Injection
@@ -37,7 +36,6 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    /* We only hide the MainMenu and footer now so the sidebar toggle arrow stays visible! */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     
@@ -237,39 +235,60 @@ metrics_html = f"""
 """
 st.markdown(metrics_html, unsafe_allow_html=True)
 
-# --- LIVE VOLUME CHART (FULLY LOCKED AGAINST HOVER SCROLLING) ---
+# --- LIVE VOLUME CHART (HIGH-LEVEL SMOOTH LINE CHART) ---
 if mentions:
-    st.markdown("### 📊 Mention Volume Timeline")
+    st.markdown("### 📈 14-Day Mention Volume")
     df = pd.DataFrame(mentions)
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
-    thirty_days_ago = datetime.now() - pd.Timedelta(days=30)
-    df = df[df['time'] >= thirty_days_ago]
+    
+    # Filter for the last 14 days to create a dynamic line chart
+    fourteen_days_ago = datetime.now() - pd.Timedelta(days=14)
+    df = df[df['time'] >= fourteen_days_ago]
     
     if not df.empty:
-        df['Timeline'] = df['time'].dt.to_period('W').dt.start_time.dt.strftime('Week of %b %d')
-        chart_data = df.groupby('Timeline').size().reset_index(name='Mentions')
+        # Group chronologically by date
+        df['Date'] = df['time'].dt.date
+        chart_data = df.groupby('Date').size().reset_index(name='Mentions')
+        chart_data = chart_data.sort_values('Date')
         
-        # We manually construct a fully non-interactive locked Vega chart spec config to stop zoom adjustments entirely
+        # Format the display timeline for the X-axis
+        chart_data['Timeline'] = pd.to_datetime(chart_data['Date']).dt.strftime('%b %d')
+        
+        # Build a sleek, professional line chart with smooth curves and data points
         st.vega_lite_chart(chart_data, {
-            'mark': {'type': 'bar', 'color': '#3b82f6'},
+            'mark': {
+                'type': 'line', 
+                'interpolate': 'monotone', # Makes the line curve smoothly
+                'point': {'filled': True, 'fill': 'white', 'stroke': '#3b82f6', 'strokeWidth': 2, 'size': 60},
+                'color': '#3b82f6',
+                'strokeWidth': 3
+            },
             'encoding': {
-                'x': {'field': 'Timeline', 'type': 'nominal', 'sort': 'ascending', 'axis': {'labelAngle': 0}},
-                'y': {'field': 'Mentions', 'type': 'quantitative'}
+                'x': {
+                    'field': 'Timeline', 
+                    'type': 'ordinal', 
+                    'sort': None, # Keeps strict chronological order
+                    'axis': {'labelAngle': -45, 'title': '', 'grid': False}
+                },
+                'y': {
+                    'field': 'Mentions', 
+                    'type': 'quantitative',
+                    'axis': {'title': 'Total Mentions', 'grid': True}
+                }
             },
             'width': 'container',
             'height': 300,
-            'selection': {}  # Explicitly passed blank selection maps disable all mouse interactive bindings/scrolling behavior
+            'selection': {} 
         }, use_container_width=True)
     else:
-        st.write("No data found in the last 30 days.")
+        st.write("No data found in the last 14 days.")
         
-# --- 🤖 AI TREND SUMMARY (FALLBACK SAFE PROSE GENERATION) ---
+# --- 🤖 AI TREND SUMMARY ---
 if mentions:
     seven_days_ago = datetime.now() - pd.Timedelta(days=7)
     recent_mentions = [m for m in mentions if pd.to_datetime(m['time']).tz_localize(None) >= seven_days_ago]
     
     if recent_mentions:
-        # Build plain word counter to avoid missing package failures entirely
         all_words = []
         ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new'}
         
@@ -303,7 +322,6 @@ if mentions:
     items_per_page = 10
     total_pages = max(1, (len(mentions) + items_per_page - 1) // items_per_page)
     
-    # Render modern pagination line bar
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         if st.button("⬅️ Previous", disabled=(st.session_state.current_page == 1), use_container_width=True):
@@ -316,11 +334,9 @@ if mentions:
             st.session_state.current_page += 1
             st.rerun()
             
-    # Calculate slices
     start_idx = (st.session_state.current_page - 1) * items_per_page
     end_idx = start_idx + items_per_page
     
-    # --- MODERN FEED CARDS FOR CURRENT PAGE ---
     for item in mentions[start_idx:end_idx]:
         time_diff = datetime.now() - item['time']
         minutes_ago = int(max(0, time_diff.total_seconds() / 60))
