@@ -7,7 +7,7 @@ import pandas as pd
 from textblob import TextBlob
 from collections import Counter
 import nltk
-import urllib.parse  # <-- FIXED: Added for safe URL query handling
+import urllib.parse
 
 # --- AUTO-DOWNLOAD REQUIRED AI COMPONENTS ---
 try:
@@ -145,7 +145,6 @@ query = "Reolink"
 if active_filter != "All Reolink":
     query = f"Reolink {active_filter}"
 
-# FIXED: Standardized safe encoding for URL structures
 encoded_query = urllib.parse.quote(query)
 
 lang_configs = {
@@ -164,7 +163,6 @@ def fetch_mentions():
     all_entries = []
     
     for lang_name, l_params in lang_configs.items():
-        # FIXED: Injected encoded_query safely into endpoint streams
         FEEDS = {
             "Google News": f"https://news.google.com/rss/search?q={encoded_query}&{l_params['gnews']}",
             "Bing News": f"https://www.bing.com/news/search?q={encoded_query}&format=rss&{l_params['bing']}",
@@ -202,7 +200,7 @@ def fetch_mentions():
             try:
                 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
                 request = youtube.search().list(
-                    q=query, # Google's API client handles raw strings natively
+                    q=query, 
                     part='snippet', 
                     type='video', 
                     order='date', 
@@ -357,27 +355,51 @@ if mentions:
         else:
             st.info("### 🧠 AI Weekly Briefing\nDiscussion volumes are stable across general security parameters without singular localized topic breakouts this week.")
 
+# --- NEW PAGINATION LOGIC (NUMBERED BUTTONS) ---
 if mentions:
     st.markdown("### 📰 Live Feed")
     
     items_per_page = 10
     total_pages = max(1, (len(mentions) + items_per_page - 1) // items_per_page)
     
+    # Catch out-of-bounds pages when switching filters
     if st.session_state.current_page > total_pages:
         st.session_state.current_page = 1
         
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col1:
+    # --- The Sliding Window Math ---
+    max_visible_pages = 7
+    start_page = max(1, st.session_state.current_page - max_visible_pages // 2)
+    end_page = min(total_pages, start_page + max_visible_pages - 1)
+    
+    # Adjust start_page if we are near the very end
+    if end_page - start_page + 1 < max_visible_pages:
+        start_page = max(1, end_page - max_visible_pages + 1)
+        
+    page_numbers = list(range(start_page, end_page + 1))
+    
+    # Build dynamic columns for layout: [Prev] [1] [2] [3]... [Next]
+    cols = st.columns([1.5] + [1]*len(page_numbers) + [1.5])
+    
+    with cols[0]:
         if st.button("⬅️ Previous", disabled=(st.session_state.current_page == 1), use_container_width=True):
             st.session_state.current_page -= 1
             st.rerun()
-    with col2:
-        st.markdown(f"<p style='text-align: center; font-weight: 600; padding-top: 6px;'>Page {st.session_state.current_page} of {total_pages}</p>", unsafe_allow_html=True)
-    with col3:
+            
+    # Inject the actual page numbers
+    for i, page_num in enumerate(page_numbers):
+        with cols[i + 1]:
+            # Highlight active page in blue using Streamlit's 'primary' button type
+            button_type = "primary" if page_num == st.session_state.current_page else "secondary"
+            if st.button(str(page_num), key=f"btn_page_{page_num}", type=button_type, use_container_width=True):
+                st.session_state.current_page = page_num
+                st.rerun()
+                
+    with cols[-1]:
         if st.button("Next ➡️", disabled=(st.session_state.current_page == total_pages), use_container_width=True):
             st.session_state.current_page += 1
             st.rerun()
             
+    # --- DISPLAY FEED LOGIC ---
     start_idx = (st.session_state.current_page - 1) * items_per_page
     end_idx = start_idx + items_per_page
     
