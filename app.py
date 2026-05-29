@@ -14,7 +14,7 @@ try:
 except LookupError:
     nltk.download('punkt', quiet=True)
 
-# --- THE "FAKE ID" FOR GOOGLE/BING ---
+# --- THE "FAKE ID" FOR GOOGLE/BING/YAHOO ---
 feedparser.USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 # --- API CREDENTIALS ---
@@ -25,7 +25,11 @@ PLATFORM_ICONS = {
     "Reddit": "🟧",
     "Google News": "📰",
     "Bing News": "🌐",
-    "YouTube": "🟥"
+    "YouTube": "🟥",
+    "Yahoo News": "🟣",
+    "Hacker News": "👾",
+    "Medium": "📝",
+    "Flickr": "📷"
 }
 
 # --- 1. PAGE SETUP & MEMORY ---
@@ -102,7 +106,6 @@ with st.sidebar:
     
     st.divider()
 
-    # --- NEW: DYNAMIC LANGUAGE FILTER ---
     st.subheader("🌍 Language Filter")
     display_language = st.selectbox(
         "Filter Dashboard By:",
@@ -122,8 +125,8 @@ with st.sidebar:
     st.subheader("📡 Sources")
     selected_sources = st.multiselect(
         "Show mentions from:",
-        ["Reddit", "Google News", "Bing News", "YouTube"],
-        default=["Reddit", "Google News", "Bing News"] 
+        ["Reddit", "Google News", "Bing News", "Yahoo News", "Hacker News", "Medium", "Flickr", "YouTube"],
+        default=["Reddit", "Google News", "Bing News", "Yahoo News", "Hacker News", "Medium", "Flickr"] 
     )
 
     st.divider()
@@ -142,9 +145,9 @@ if active_filter != "All Reolink":
     query = f"Reolink {active_filter}"
 
 lang_configs = {
-    "EN 🇺🇸": {"gnews": "hl=en-US&gl=US&ceid=US:en", "bing": "mkt=en-US", "yt": "en"},
-    "FR 🇫🇷": {"gnews": "hl=fr&gl=FR&ceid=FR:fr", "bing": "mkt=fr-FR", "yt": "fr"},
-    "DE 🇩🇪": {"gnews": "hl=de&gl=DE&ceid=DE:de", "bing": "mkt=de-DE", "yt": "de"}
+    "EN 🇺🇸": {"gnews": "hl=en-US&gl=US&ceid=US:en", "bing": "mkt=en-US", "yt": "en", "yahoo": "news.search.yahoo.com"},
+    "FR 🇫🇷": {"gnews": "hl=fr&gl=FR&ceid=FR:fr", "bing": "mkt=fr-FR", "yt": "fr", "yahoo": "fr.news.search.yahoo.com"},
+    "DE 🇩🇪": {"gnews": "hl=de&gl=DE&ceid=DE:de", "bing": "mkt=de-DE", "yt": "de", "yahoo": "de.news.search.yahoo.com"}
 }
 
 def analyze_sentiment(text):
@@ -157,13 +160,21 @@ def fetch_mentions():
     all_entries = []
     
     for lang_name, l_params in lang_configs.items():
+        # Setup feeds for the current language loop
         FEEDS = {
             "Google News": f"https://news.google.com/rss/search?q={query}&{l_params['gnews']}",
-            "Bing News": f"https://www.bing.com/news/search?q={query}&format=rss&{l_params['bing']}"
+            "Bing News": f"https://www.bing.com/news/search?q={query}&format=rss&{l_params['bing']}",
+            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={query}"
         }
         
+        # We only run these networks once on the English loop because they don't use strict regional URLs
         if lang_name == "EN 🇺🇸":
             FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={query}&sort=new"
+            FEEDS["Hacker News"] = f"https://hnrss.org/newest?q={query}"
+            # Medium and Flickr tags work best without spaces
+            query_no_space = query.replace(' ', '')
+            FEEDS["Medium"] = f"https://medium.com/feed/tag/{query_no_space}"
+            FEEDS["Flickr"] = f"https://www.flickr.com/services/feeds/photos_public.gne?tags={query_no_space}&format=rss_200"
 
         for source, url in FEEDS.items():
             if source in selected_sources:
@@ -233,7 +244,7 @@ st.title(f"📡 Live Intelligence: {active_filter}")
 # Scrape everything globally
 all_raw_mentions = fetch_mentions()
 
-# --- NEW: APPLY THE LANGUAGE FILTER ---
+# Apply the Language Filter
 if display_language != "All Languages 🌍":
     raw_mentions = [m for m in all_raw_mentions if m['language'] == display_language]
 else:
@@ -357,7 +368,6 @@ if mentions:
     items_per_page = 10
     total_pages = max(1, (len(mentions) + items_per_page - 1) // items_per_page)
     
-    # Reset page index if it goes out of bounds due to filtering
     if st.session_state.current_page > total_pages:
         st.session_state.current_page = 1
         
