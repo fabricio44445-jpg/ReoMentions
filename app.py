@@ -102,6 +102,15 @@ with st.sidebar:
     
     st.divider()
 
+    # --- NEW: DYNAMIC LANGUAGE FILTER ---
+    st.subheader("🌍 Language Filter")
+    display_language = st.selectbox(
+        "Filter Dashboard By:",
+        ["All Languages 🌍", "EN 🇺🇸", "FR 🇫🇷", "DE 🇩🇪"]
+    )
+
+    st.divider()
+
     st.subheader("🧠 Analytics")
     sort_by = st.selectbox(
         "Sort Mentions By:",
@@ -121,7 +130,7 @@ with st.sidebar:
     
     st.subheader("⏱️ Sync Settings")
     auto_refresh = st.toggle("Enable Auto-Refresh", value=True)
-    refresh_interval = st.slider("Refresh Interval (seconds)", min_value=300, max_value=3600, value=900)
+    refresh_interval = st.slider("Refresh Interval (seconds)", min_value=900, max_value=7200, value=3600)
     
     if st.button("🔄 Force Refresh Now", use_container_width=True):
         st.session_state.current_page = 1
@@ -132,10 +141,10 @@ query = "Reolink"
 if active_filter != "All Reolink":
     query = f"Reolink {active_filter}"
 
-FEEDS = {
-    "Reddit": f"https://www.reddit.com/search.rss?q={query}&sort=new",
-    "Google News": f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en",
-    "Bing News": f"https://www.bing.com/news/search?q={query}&format=rss"
+lang_configs = {
+    "EN 🇺🇸": {"gnews": "hl=en-US&gl=US&ceid=US:en", "bing": "mkt=en-US", "yt": "en"},
+    "FR 🇫🇷": {"gnews": "hl=fr&gl=FR&ceid=FR:fr", "bing": "mkt=fr-FR", "yt": "fr"},
+    "DE 🇩🇪": {"gnews": "hl=de&gl=DE&ceid=DE:de", "bing": "mkt=de-DE", "yt": "de"}
 }
 
 def analyze_sentiment(text):
@@ -147,59 +156,88 @@ def analyze_sentiment(text):
 def fetch_mentions():
     all_entries = []
     
-    for source, url in FEEDS.items():
-        if source in selected_sources:
-            try:
-                feed = feedparser.parse(url)
-                for entry in feed.entries:
-                    dt = entry.get('published_parsed') or entry.get('updated_parsed')
-                    title = entry.title
-                    sentiment_label, sentiment_score = analyze_sentiment(title)
-                    all_entries.append({
-                        "source": source,
-                        "title": title,
-                        "link": entry.link,
-                        "time": datetime(*dt[:6]) if dt else datetime.now(),
-                        "sentiment": sentiment_label,
-                        "score": sentiment_score
-                    })
-            except: pass 
+    for lang_name, l_params in lang_configs.items():
+        FEEDS = {
+            "Google News": f"https://news.google.com/rss/search?q={query}&{l_params['gnews']}",
+            "Bing News": f"https://www.bing.com/news/search?q={query}&format=rss&{l_params['bing']}"
+        }
+        
+        if lang_name == "EN 🇺🇸":
+            FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={query}&sort=new"
 
-    if "YouTube" in selected_sources and YOUTUBE_API_KEY:
-        try:
-            youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-            request = youtube.search().list(q=query, part='snippet', type='video', order='date', maxResults=15)
-            response = request.execute()
+        for source, url in FEEDS.items():
+            if source in selected_sources:
+                try:
+                    feed = feedparser.parse(url)
+                    for entry in feed.entries:
+                        dt = entry.get('published_parsed') or entry.get('updated_parsed')
+                        title = entry.title
+                        sentiment_label, sentiment_score = analyze_sentiment(title)
+                        all_entries.append({
+                            "source": source,
+                            "title": title,
+                            "link": entry.link,
+                            "time": datetime(*dt[:6]) if dt else datetime.now(),
+                            "sentiment": sentiment_label,
+                            "score": sentiment_score,
+                            "language": lang_name
+                        })
+                except: pass 
+
+        if "YouTube" in selected_sources and YOUTUBE_API_KEY:
+            try:
+                youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+                request = youtube.search().list(
+                    q=query, 
+                    part='snippet', 
+                    type='video', 
+                    order='date', 
+                    relevanceLanguage=l_params['yt'],
+                    maxResults=15
+                )
+                response = request.execute()
+                
+                for item in response.get('items', []):
+                    video_id = item['id'].get('videoId')
+                    if video_id:
+                        published_at = item['snippet']['publishedAt']
+                        video_time = datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ")
+                        title = item['snippet']['title']
+                        sentiment_label, sentiment_score = analyze_sentiment(title)
+                        
+                        all_entries.append({
+                            "source": "YouTube",
+                            "title": title,
+                            "link": f"https://www.youtube.com/watch?v={video_id}",
+                            "time": video_time,
+                            "sentiment": sentiment_label,
+                            "score": sentiment_score,
+                            "language": lang_name
+                        })
+            except Exception as e:
+                if "quota" in str(e).lower() or "429" in str(e):
+                    st.sidebar.warning("⚠️ YouTube Daily Limit Reached. Will reset at midnight.")
+                else:
+                    pass
+                
+    unique_entries = {}
+    for entry in all_entries:
+        if entry['link'] not in unique_entries:
+            unique_entries[entry['link']] = entry
             
-            for item in response.get('items', []):
-                video_id = item['id'].get('videoId')
-                if video_id:
-                    published_at = item['snippet']['publishedAt']
-                    video_time = datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ")
-                    title = item['snippet']['title']
-                    sentiment_label, sentiment_score = analyze_sentiment(title)
-                    
-                    all_entries.append({
-                        "source": "YouTube",
-                        "title": title,
-                        "link": f"https://www.youtube.com/watch?v={video_id}",
-                        "time": video_time,
-                        "sentiment": sentiment_label,
-                        "score": sentiment_score
-                    })
-        except Exception as e:
-            if "quota" in str(e).lower() or "429" in str(e):
-                st.sidebar.warning("⚠️ YouTube Daily Limit Reached. Will reset at midnight.")
-            else:
-                st.sidebar.error("YouTube API error. Check connection.")
-            
-    return all_entries
+    return list(unique_entries.values())
 
 # --- 4. MAIN DASHBOARD UI ---
 st.title(f"📡 Live Intelligence: {active_filter}")
 
-# Display live runtime shell wrapper
-raw_mentions = fetch_mentions()
+# Scrape everything globally
+all_raw_mentions = fetch_mentions()
+
+# --- NEW: APPLY THE LANGUAGE FILTER ---
+if display_language != "All Languages 🌍":
+    raw_mentions = [m for m in all_raw_mentions if m['language'] == display_language]
+else:
+    raw_mentions = all_raw_mentions
 
 # Apply Sorting Logic
 if sort_by == "Newest First":
@@ -217,6 +255,7 @@ if mentions and sort_by == "Newest First":
     st.session_state.last_top_mention = current_top_link
 
 # MODERN METRICS ROW
+coverage_display = "🇺🇸 🇫🇷 🇩🇪" if display_language == "All Languages 🌍" else display_language
 metrics_html = f"""
 <div style="display: flex; gap: 16px; margin-bottom: 24px;">
     <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
@@ -228,37 +267,33 @@ metrics_html = f"""
         <div class="metric-value" style="color: #10b981;">{len(mentions)}</div>
     </div>
     <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
-        <div class="metric-label">Last Synced</div>
-        <div class="metric-value" style="color: #8b5cf6;">{datetime.now().strftime('%I:%M:%S %p')}</div>
+        <div class="metric-label">Active View</div>
+        <div class="metric-value" style="color: #8b5cf6; font-size: 1.5rem; padding-top: 6px;">{coverage_display}</div>
     </div>
 </div>
 """
 st.markdown(metrics_html, unsafe_allow_html=True)
 
-# --- LIVE VOLUME CHART (HIGH-LEVEL SMOOTH LINE CHART) ---
+# --- LIVE VOLUME CHART ---
 if mentions:
     st.markdown("### 📈 14-Day Mention Volume")
     df = pd.DataFrame(mentions)
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
     
-    # Filter for the last 14 days to create a dynamic line chart
     fourteen_days_ago = datetime.now() - pd.Timedelta(days=14)
     df = df[df['time'] >= fourteen_days_ago]
     
     if not df.empty:
-        # Group chronologically by date
         df['Date'] = df['time'].dt.date
         chart_data = df.groupby('Date').size().reset_index(name='Mentions')
         chart_data = chart_data.sort_values('Date')
         
-        # Format the display timeline for the X-axis
         chart_data['Timeline'] = pd.to_datetime(chart_data['Date']).dt.strftime('%b %d')
         
-        # Build a sleek, professional line chart with smooth curves and data points
         st.vega_lite_chart(chart_data, {
             'mark': {
                 'type': 'line', 
-                'interpolate': 'monotone', # Makes the line curve smoothly
+                'interpolate': 'monotone', 
                 'point': {'filled': True, 'fill': 'white', 'stroke': '#3b82f6', 'strokeWidth': 2, 'size': 60},
                 'color': '#3b82f6',
                 'strokeWidth': 3
@@ -267,7 +302,7 @@ if mentions:
                 'x': {
                     'field': 'Timeline', 
                     'type': 'ordinal', 
-                    'sort': None, # Keeps strict chronological order
+                    'sort': None, 
                     'axis': {'labelAngle': -45, 'title': '', 'grid': False}
                 },
                 'y': {
@@ -281,7 +316,7 @@ if mentions:
             'selection': {} 
         }, use_container_width=True)
     else:
-        st.write("No data found in the last 14 days.")
+        st.write("No data found in the last 14 days for this region.")
         
 # --- 🤖 AI TREND SUMMARY ---
 if mentions:
@@ -290,7 +325,7 @@ if mentions:
     
     if recent_mentions:
         all_words = []
-        ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new'}
+        ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new', 'les', 'des', 'und', 'der', 'die', 'das', 'pour', 'sur', 'ist', 'von', 'est', 'une'}
         
         for m in recent_mentions:
             words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
@@ -309,7 +344,7 @@ if mentions:
             overall_sentiment = "positive 🟢" if avg_score > 0.15 else "negative 🔴" if avg_score < -0.15 else "neutral ⚪"
             
             st.info(f"### 🧠 AI Weekly Briefing\n"
-                    f"Based on our analysis of trends across platforms over the last 7 days, discussion is heavily indexing toward concepts surrounding **'{top_topic}'**. "
+                    f"Based on our analysis of trends over the last 7 days for the selected region, discussion is heavily indexing toward concepts surrounding **'{top_topic}'**. "
                     f"General user expression on this specific focus area is leaning **{overall_sentiment}**. "
                     f"The core sample mention steering this distribution is: *\"{related_mentions[0]['title']}\"*.")
         else:
@@ -322,6 +357,10 @@ if mentions:
     items_per_page = 10
     total_pages = max(1, (len(mentions) + items_per_page - 1) // items_per_page)
     
+    # Reset page index if it goes out of bounds due to filtering
+    if st.session_state.current_page > total_pages:
+        st.session_state.current_page = 1
+        
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         if st.button("⬅️ Previous", disabled=(st.session_state.current_page == 1), use_container_width=True):
@@ -347,14 +386,14 @@ if mentions:
             <h3 class="card-title">{icon} {item['title']}</h3>
             <span class="card-sentiment">{item['sentiment']}</span>
             <div class="card-bottom">
-                <span>📅 {item['time'].strftime('%b %d, %Y - %I:%M %p')} ({minutes_ago}m ago) • via <strong>{item['source']}</strong></span>
+                <span>📅 {item['time'].strftime('%b %d, %Y - %I:%M %p')} ({minutes_ago}m ago) • via <strong>{item['source']}</strong> • {item['language']}</span>
                 <a href="{item['link']}" target="_blank" class="card-link">Open Link ↗</a>
             </div>
         </div>
         """
         st.markdown(card_html, unsafe_allow_html=True)
 else:
-    st.info(f"No recent mentions found for '{query}'. Waiting for updates...")
+    st.info(f"No recent mentions found for '{query}' in this region. Waiting for updates...")
 
 # --- SLEEP RUNNER LOOP HANDLER ---
 if auto_refresh:
