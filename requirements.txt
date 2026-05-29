@@ -1,0 +1,6 @@
+streamlit
+feedparser
+google-api-python-client
+pandas
+textblob
+nltk
