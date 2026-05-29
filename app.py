@@ -7,6 +7,7 @@ import pandas as pd
 from textblob import TextBlob
 from collections import Counter
 import nltk
+import urllib.parse  # <-- FIXED: Added for safe URL query handling
 
 # --- AUTO-DOWNLOAD REQUIRED AI COMPONENTS ---
 try:
@@ -144,6 +145,9 @@ query = "Reolink"
 if active_filter != "All Reolink":
     query = f"Reolink {active_filter}"
 
+# FIXED: Standardized safe encoding for URL structures
+encoded_query = urllib.parse.quote(query)
+
 lang_configs = {
     "EN 🇺🇸": {"gnews": "hl=en-US&gl=US&ceid=US:en", "bing": "mkt=en-US", "yt": "en", "yahoo": "news.search.yahoo.com"},
     "FR 🇫🇷": {"gnews": "hl=fr&gl=FR&ceid=FR:fr", "bing": "mkt=fr-FR", "yt": "fr", "yahoo": "fr.news.search.yahoo.com"},
@@ -160,18 +164,17 @@ def fetch_mentions():
     all_entries = []
     
     for lang_name, l_params in lang_configs.items():
-        # Setup feeds for the current language loop
+        # FIXED: Injected encoded_query safely into endpoint streams
         FEEDS = {
-            "Google News": f"https://news.google.com/rss/search?q={query}&{l_params['gnews']}",
-            "Bing News": f"https://www.bing.com/news/search?q={query}&format=rss&{l_params['bing']}",
-            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={query}"
+            "Google News": f"https://news.google.com/rss/search?q={encoded_query}&{l_params['gnews']}",
+            "Bing News": f"https://www.bing.com/news/search?q={encoded_query}&format=rss&{l_params['bing']}",
+            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={encoded_query}"
         }
         
-        # We only run these networks once on the English loop because they don't use strict regional URLs
         if lang_name == "EN 🇺🇸":
-            FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={query}&sort=new"
-            FEEDS["Hacker News"] = f"https://hnrss.org/newest?q={query}"
-            # Medium and Flickr tags work best without spaces
+            FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
+            FEEDS["Hacker News"] = f"https://hnrss.org/newest?q={encoded_query}"
+            
             query_no_space = query.replace(' ', '')
             FEEDS["Medium"] = f"https://medium.com/feed/tag/{query_no_space}"
             FEEDS["Flickr"] = f"https://www.flickr.com/services/feeds/photos_public.gne?tags={query_no_space}&format=rss_200"
@@ -199,7 +202,7 @@ def fetch_mentions():
             try:
                 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
                 request = youtube.search().list(
-                    q=query, 
+                    q=query, # Google's API client handles raw strings natively
                     part='snippet', 
                     type='video', 
                     order='date', 
@@ -241,16 +244,13 @@ def fetch_mentions():
 # --- 4. MAIN DASHBOARD UI ---
 st.title(f"📡 Live Intelligence: {active_filter}")
 
-# Scrape everything globally
 all_raw_mentions = fetch_mentions()
 
-# Apply the Language Filter
 if display_language != "All Languages 🌍":
     raw_mentions = [m for m in all_raw_mentions if m['language'] == display_language]
 else:
     raw_mentions = all_raw_mentions
 
-# Apply Sorting Logic
 if sort_by == "Newest First":
     mentions = sorted(raw_mentions, key=lambda x: x['time'], reverse=True)
 elif sort_by == "Most Positive 🟢":
@@ -258,14 +258,12 @@ elif sort_by == "Most Positive 🟢":
 elif sort_by == "Most Negative 🔴":
     mentions = sorted(raw_mentions, key=lambda x: x['score'])
 
-# Check for new top mention to trigger sound alert
 if mentions and sort_by == "Newest First":
     current_top_link = mentions[0]['link']
     if st.session_state.last_top_mention and st.session_state.last_top_mention != current_top_link:
         st.markdown('<audio autoplay="true" src="https://upload.wikimedia.org/wikipedia/commons/3/34/Sound_Effect_-_Ping_Sound.ogg"></audio>', unsafe_allow_html=True)
     st.session_state.last_top_mention = current_top_link
 
-# MODERN METRICS ROW
 coverage_display = "🇺🇸 🇫🇷 🇩🇪" if display_language == "All Languages 🌍" else display_language
 metrics_html = f"""
 <div style="display: flex; gap: 16px; margin-bottom: 24px;">
@@ -285,7 +283,6 @@ metrics_html = f"""
 """
 st.markdown(metrics_html, unsafe_allow_html=True)
 
-# --- LIVE VOLUME CHART ---
 if mentions:
     st.markdown("### 📈 14-Day Mention Volume")
     df = pd.DataFrame(mentions)
@@ -329,7 +326,6 @@ if mentions:
     else:
         st.write("No data found in the last 14 days for this region.")
         
-# --- 🤖 AI TREND SUMMARY ---
 if mentions:
     seven_days_ago = datetime.now() - pd.Timedelta(days=7)
     recent_mentions = [m for m in mentions if pd.to_datetime(m['time']).tz_localize(None) >= seven_days_ago]
@@ -361,7 +357,6 @@ if mentions:
         else:
             st.info("### 🧠 AI Weekly Briefing\nDiscussion volumes are stable across general security parameters without singular localized topic breakouts this week.")
 
-# --- PAGINATION LOGIC (10 MENTIONS PER PAGE) ---
 if mentions:
     st.markdown("### 📰 Live Feed")
     
@@ -405,7 +400,6 @@ if mentions:
 else:
     st.info(f"No recent mentions found for '{query}' in this region. Waiting for updates...")
 
-# --- SLEEP RUNNER LOOP HANDLER ---
 if auto_refresh:
     time.sleep(refresh_interval)
     st.rerun()
