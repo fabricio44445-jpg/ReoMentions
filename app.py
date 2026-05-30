@@ -1,6 +1,6 @@
 import streamlit as st
 import feedparser
-from datetime import datetime, date
+from datetime import datetime
 import time
 from googleapiclient.discovery import build
 import pandas as pd
@@ -27,11 +27,11 @@ PLATFORM_ICONS = {
 }
 
 # --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Reolink Marketing Engine", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Reolink Marketing Command Center", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght=400;500;600;700&display=swap');
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
     .modern-card { background-color: #ffffff; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 1px solid #f1f5f9; }
@@ -45,35 +45,58 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-if "focus_areas" not in st.session_state: st.session_state.focus_areas = ["All Reolink"]
-if "current_page" not in st.session_state: st.session_state.current_page = 1
+# Memory Management for Custom Filters
+if "search_filters" not in st.session_state: 
+    st.session_state.search_filters = ["Reolink", "Reolink ONVIF", "Magicam"]
+if "current_page" not in st.session_state: 
+    st.session_state.current_page = 1
 
 # --- 2. SIDEBAR CONTROLS ---
 with st.sidebar:
-    st.title("⚙️ Marketing Controls")
+    st.title("⚙️ Engine Controls")
     
-    st.subheader("🎯 Primary Target")
-    active_filter = st.radio("Select Brand Focus:", st.session_state.focus_areas, label_visibility="collapsed")
+    st.subheader("🎯 Active Target Filter")
+    active_query = st.radio("Select Target Query:", st.session_state.search_filters, label_visibility="collapsed")
     
-    st.subheader("⚔️ Competitor Benchmark")
-    competitor_input = st.text_input("Enter rival to track (e.g. Arlo):", placeholder="Leave blank to disable")
+    # Dynamic Query Adder Block
+    with st.expander("➕ Add Custom Search Filter"):
+        new_filter = st.text_input("Enter exact keywords:", placeholder="e.g., Reolink Altas")
+        if st.button("Add to Monitor List", use_container_width=True):
+            if new_filter and new_filter not in st.session_state.search_filters:
+                st.session_state.search_filters.append(new_filter)
+                st.rerun()
+
+    with st.expander("➖ Remove Custom Filter"):
+        removable = [f for f in st.session_state.search_filters if f != "Reolink"]
+        if removable:
+            to_remove = st.selectbox("Select filter to delete:", removable)
+            if st.button("Delete Filter", use_container_width=True):
+                st.session_state.search_filters.remove(to_remove)
+                st.rerun()
+        else:
+            st.info("No custom filters to remove.")
     
-    st.subheader("🗓️ Campaign Marker")
-    event_date = st.date_input("Highlight an event on the chart:", value=None)
-    event_name = st.text_input("Event Name:", placeholder="June 3 Livestream") if event_date else None
+    st.divider()
+    
+    st.subheader("⚔️ Macro Benchmark")
+    competitor_input = st.text_input("Track comparison brand (optional):", placeholder="e.g. Arlo")
+    
+    st.subheader("🗓️ Event Marker")
+    event_date = st.date_input("Highlight campaign event:", value=None)
+    event_name = st.text_input("Event Tag Name:", placeholder="Product Launch") if event_date else None
 
     st.divider()
     display_language = st.selectbox("🌍 Filter Region:", ["All Languages 🌍", "EN 🇺🇸", "FR 🇫🇷", "DE 🇩🇪"])
-    sort_by = st.selectbox("🧠 Sort Mentions By:", ["Newest First", "Most Positive 🟢", "Most Negative 🔴"])
-    selected_sources = st.multiselect("📡 Sources:", list(PLATFORM_ICONS.keys()), default=["Reddit", "Google News", "YouTube", "Podcasts"])
+    sort_by = st.selectbox("🧠 Sort Target Feed By:", ["Newest First", "Most Positive 🟢", "Most Negative 🔴"])
+    selected_sources = st.multiselect("📡 Active Streams:", list(PLATFORM_ICONS.keys()), default=["Reddit", "Google News", "YouTube", "Podcasts", "Blogs"])
     
     auto_refresh = st.toggle("Enable Auto-Refresh", value=True)
     refresh_interval = st.slider("Refresh Interval (sec)", min_value=1800, max_value=7200, value=3600)
-    if st.button("🔄 Force Sync Now", use_container_width=True):
+    if st.button("🔄 Force Data Sync", use_container_width=True):
         st.session_state.current_page = 1
         st.rerun()
 
-# --- 3. DYNAMIC SEARCH ENGINE ---
+# --- 3. CORE PROCESSING ENGINE ---
 lang_configs = {
     "EN 🇺🇸": {"gnews": "hl=en-US&gl=US&ceid=US:en", "bing": "mkt=en-US", "yt": "en", "yahoo": "news.search.yahoo.com"},
     "FR 🇫🇷": {"gnews": "hl=fr&gl=FR&ceid=FR:fr", "bing": "mkt=fr-FR", "yt": "fr", "yahoo": "fr.news.search.yahoo.com"},
@@ -86,8 +109,8 @@ def analyze_sentiment(text):
     elif score < -0.15: return "🔴 Negative", score
     else: return "⚪ Neutral", score
 
-def fetch_target_mentions(base_query, brand_label):
-    encoded_query = urllib.parse.quote(base_query)
+def fetch_target_data(target_string, brand_label):
+    encoded_query = urllib.parse.quote(target_string)
     entries = []
     
     for lang_name, l_params in lang_configs.items():
@@ -99,19 +122,18 @@ def fetch_target_mentions(base_query, brand_label):
         if lang_name == "EN 🇺🇸":
             FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
             FEEDS["Hacker News"] = f"https://hnrss.org/newest?q={encoded_query}"
-            query_no_space = base_query.replace(' ', '')
+            query_no_space = target_string.replace(' ', '')
             FEEDS["Medium"] = f"https://medium.com/feed/tag/{query_no_space}"
             FEEDS["Blogs"] = f"https://wordpress.com/tag/{query_no_space}/feed"
             FEEDS["Flickr"] = f"https://www.flickr.com/services/feeds/photos_public.gne?tags={query_no_space}&format=rss_200"
 
-        # Standard RSS Fetching
         for source, url in FEEDS.items():
             if source in selected_sources:
                 try:
                     feed = feedparser.parse(url)
                     for entry in feed.entries:
                         dt = entry.get('published_parsed') or entry.get('updated_parsed')
-                        author = entry.get('author', 'Unknown Author')
+                        author = entry.get('author', 'Independent Creator')
                         sentiment_label, sentiment_score = analyze_sentiment(entry.title)
                         entries.append({
                             "brand": brand_label, "source": source, "title": entry.title,
@@ -121,51 +143,45 @@ def fetch_target_mentions(base_query, brand_label):
                         })
                 except: pass 
 
-        # iTunes Podcast Fetching (EN Only for optimal results)
         if "Podcasts" in selected_sources and lang_name == "EN 🇺🇸":
             try:
                 podcast_url = f"https://itunes.apple.com/search?term={encoded_query}&entity=podcastEpisode&limit=15"
                 response = requests.get(podcast_url, timeout=5).json()
                 for result in response.get('results', []):
                     entries.append({
-                        "brand": brand_label,
-                        "source": "Podcasts",
-                        "title": f"{result.get('collectionName', 'Unknown Show')} - {result.get('trackName', 'Episode')}",
-                        "author": result.get('artistName', 'Unknown Host'),
+                        "brand": brand_label, "source": "Podcasts",
+                        "title": f"{result.get('collectionName', 'Podcast')} - {result.get('trackName', 'Episode')}",
+                        "author": result.get('artistName', 'Host'),
                         "link": result.get('trackViewUrl', ''),
                         "time": datetime.strptime(result['releaseDate'], "%Y-%m-%dT%H:%M:%SZ"),
-                        "sentiment": "⚪ Neutral",
-                        "score": 0.0,
-                        "language": "EN 🇺🇸"
+                        "sentiment": "⚪ Neutral", "score": 0.0, "language": "EN 🇺🇸"
                     })
             except: pass
 
-        # YouTube Fetching
         if "YouTube" in selected_sources and YOUTUBE_API_KEY:
             try:
                 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-                request = youtube.search().list(q=base_query, part='snippet', type='video', order='date', relevanceLanguage=l_params['yt'], maxResults=15)
+                request = youtube.search().list(q=target_string, part='snippet', type='video', order='date', relevanceLanguage=l_params['yt'], maxResults=15)
                 response = request.execute()
                 for item in response.get('items', []):
                     video_id = item['id'].get('videoId')
                     if video_id:
                         pub_time = datetime.strptime(item['snippet']['publishedAt'], "%Y-%m-%dT%H:%M:%SZ")
-                        channel_name = item['snippet']['channelTitle']
                         sentiment_label, sentiment_score = analyze_sentiment(item['snippet']['title'])
                         entries.append({
                             "brand": brand_label, "source": "YouTube", "title": item['snippet']['title'],
-                            "author": channel_name, "link": f"https://www.youtube.com/watch?v={video_id}",
+                            "author": item['snippet']['channelTitle'], "link": f"https://www.youtube.com/watch?v={video_id}",
                             "time": pub_time, "sentiment": sentiment_label, "score": sentiment_score, "language": lang_name
                         })
             except: pass
             
     return entries
 
-primary_query = "Reolink" if active_filter == "All Reolink" else f"Reolink {active_filter}"
-all_raw_mentions = fetch_target_mentions(primary_query, "Reolink")
+# Execute API Scraping
+all_raw_mentions = fetch_target_data(active_query, active_query)
 
 if competitor_input:
-    comp_mentions = fetch_target_mentions(competitor_input.strip(), competitor_input.strip())
+    comp_mentions = fetch_target_data(competitor_input.strip(), competitor_input.strip())
     all_raw_mentions.extend(comp_mentions)
 
 unique_entries = {m['link']: m for m in all_raw_mentions}
@@ -176,30 +192,78 @@ if display_language != "All Languages 🌍":
 else:
     mentions = all_raw_mentions
 
-brand_mentions = [m for m in mentions if m['brand'] == "Reolink"]
+target_brand_mentions = [m for m in mentions if m['brand'] == active_query]
 
-if sort_by == "Newest First": brand_mentions = sorted(brand_mentions, key=lambda x: x['time'], reverse=True)
-elif sort_by == "Most Positive 🟢": brand_mentions = sorted(brand_mentions, key=lambda x: x['score'], reverse=True)
-elif sort_by == "Most Negative 🔴": brand_mentions = sorted(brand_mentions, key=lambda x: x['score'])
+if sort_by == "Newest First": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['time'], reverse=True)
+elif sort_by == "Most Positive 🟢": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['score'], reverse=True)
+elif sort_by == "Most Negative 🔴": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['score'])
 
 # --- 4. MAIN DASHBOARD UI ---
-st.title(f"📈 Share of Voice & Campaign Tracker")
+st.title(f"🧠 Intelligence Hub: {active_query}")
 
+# METRICS PANEL
 st.markdown(f"""
 <div style="display: flex; gap: 16px; margin-bottom: 24px;">
     <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
-        <div class="metric-label">Primary Brand</div>
-        <div class="metric-value" style="color: #3b82f6;">{len([m for m in mentions if m['brand']=='Reolink'])} Mentions</div>
+        <div class="metric-label">Active Monitoring Stream</div>
+        <div class="metric-value" style="color: #3b82f6;">{len(target_brand_mentions)} Mentions</div>
     </div>
     <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
-        <div class="metric-label">Competitor ({competitor_input or 'None'})</div>
+        <div class="metric-label">Cross-Benchmark Volume ({competitor_input or 'None'})</div>
         <div class="metric-value" style="color: #ef4444;">{len([m for m in mentions if m['brand']==competitor_input]) if competitor_input else 0} Mentions</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
+# --- 🤖 RESTORED AI BRIEFING ENGINE (DAILY BREAKOUT + WEEKLY MACRO TOPIC) ---
+if target_brand_mentions:
+    now = datetime.now()
+    one_day_ago = now - pd.Timedelta(days=1)
+    seven_days_ago = now - pd.Timedelta(days=7)
+    
+    daily_mentions = [m for m in target_brand_mentions if pd.to_datetime(m['time']).tz_localize(None) >= one_day_ago]
+    weekly_mentions = [m for m in target_brand_mentions if pd.to_datetime(m['time']).tz_localize(None) >= seven_days_ago]
+    
+    ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new', 'les', 'des', 'und', 'der', 'die', 'das', 'pour', 'sur', 'ist', 'von', 'est', 'une', 'omvi', 'onvif', 'magicam'}
+    
+    # Step 1: Extract 7-Day Macro Hottest Topic
+    weekly_top_topic = "General Conversations"
+    if weekly_mentions:
+        w_words = []
+        for m in weekly_mentions:
+            words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
+            w_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
+        w_counts = Counter(w_words).most_common(1)
+        if w_counts:
+            weekly_top_topic = w_counts[0][0].title()
+
+    # Step 2: Extract 24-Hour Daily Pulse Briefing
+    if daily_mentions:
+        d_words = []
+        for m in daily_mentions:
+            words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
+            d_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
+        d_counts = Counter(d_words).most_common(1)
+        
+        if d_counts:
+            daily_top_topic = d_counts[0][0].title()
+            related_mentions = [m for m in daily_mentions if daily_top_topic.lower() in m['title'].lower()]
+            if not related_mentions: related_mentions = daily_mentions
+            avg_score = sum(m['score'] for m in related_mentions) / len(related_mentions)
+            overall_sentiment = "positive 🟢" if avg_score > 0.15 else "negative 🔴" if avg_score < -0.15 else "neutral ⚪"
+            
+            st.info(f"### 🧠 AI Daily Briefing\n"
+                    f"**Today's Pulse:** Over the last 24 hours, chatter around **'{active_query}'** is heavily focused on the keyword topic **'{daily_top_topic}'** "
+                    f"(trending **{overall_sentiment}**). The primary narrative driver right now is: *\"{related_mentions[0]['title']}\"*\n\n"
+                    f"**Weekly Macro Context:** Across the entire last 7 days, the dominant trending topic remains anchored on **'{weekly_top_topic}'**.")
+        else:
+            st.info(f"### 🧠 AI Daily Briefing\nDiscussion trends are stable for '{active_query}' today without localized spikes. The broader 7-day macro trend remains focused on **'{weekly_top_topic}'**.")
+    else:
+         st.info(f"### 🧠 AI Daily Briefing\nNo breaking spikes captured in the last 24 hours for this keyword. The broader 7-day macro trend remains focused on **'{weekly_top_topic}'**.")
+
+# --- SHARE OF VOICE TIMELINE ---
 if mentions:
-    st.markdown("### 📊 14-Day Share of Voice")
+    st.markdown("### 📊 Timeline Share of Voice (Last 14 Days)")
     df = pd.DataFrame(mentions)
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
     df = df[df['time'] >= (datetime.now() - pd.Timedelta(days=14))]
@@ -211,7 +275,7 @@ if mentions:
         base = alt.Chart(chart_data).encode(
             x=alt.X('Date:T', title=''),
             y=alt.Y('Mentions:Q', title='Volume'),
-            color=alt.Color('brand:N', scale=alt.Scale(range=['#3b82f6', '#ef4444']), legend=alt.Legend(title="Brand"))
+            color=alt.Color('brand:N', scale=alt.Scale(range=['#3b82f6', '#ef4444']), legend=alt.Legend(title="Keyword Streams"))
         )
         line = base.mark_line(interpolate='monotone', strokeWidth=3)
         points = base.mark_circle(size=80, opacity=1)
@@ -228,33 +292,15 @@ if mentions:
             else:
                 chart = chart + rule
                 
-        st.altair_chart(chart.properties(height=350), use_container_width=True)
-
-st.markdown("### 🗣️ The KOL Rolodex (Top Voices)")
-if brand_mentions:
-    valid_authors = [m['author'] for m in brand_mentions if m['author'] not in ['Unknown Author', 'Unknown Host', '']]
-    top_authors = Counter(valid_authors).most_common(4)
-    
-    if top_authors:
-        cols = st.columns(len(top_authors))
-        for i, (author, count) in enumerate(top_authors):
-            with cols[i]:
-                st.markdown(f"""
-                <div style="background: rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.2); border-radius: 8px; padding: 12px; text-align: center;">
-                    <div style="font-size: 0.8rem; color: #64748b; text-transform: uppercase;">Top Creator</div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: #1e293b; margin: 4px 0;">{author}</div>
-                    <div style="font-size: 0.9rem; font-weight: 600; color: #3b82f6;">{count} Mentions</div>
-                </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.info("Gathering creator identities. Check back soon.")
+        st.altair_chart(chart.properties(height=300), use_container_width=True)
 
 st.divider()
 
-if brand_mentions:
-    st.markdown(f"### 📰 Your Primary Feed ({len(brand_mentions)} Results)")
+# --- THE STREAMS FEED ---
+if target_brand_mentions:
+    st.markdown(f"### 📰 Stream Monitor ({len(target_brand_mentions)} Entries Match)")
     items_per_page = 10
-    total_pages = max(1, (len(brand_mentions) + items_per_page - 1) // items_per_page)
+    total_pages = max(1, (len(target_brand_mentions) + items_per_page - 1) // items_per_page)
     if st.session_state.current_page > total_pages: st.session_state.current_page = 1
         
     start_page = max(1, st.session_state.current_page - 3)
@@ -277,7 +323,7 @@ if brand_mentions:
             
     start_idx = (st.session_state.current_page - 1) * items_per_page
     
-    for item in brand_mentions[start_idx:start_idx + items_per_page]:
+    for item in target_brand_mentions[start_idx:start_idx + items_per_page]:
         time_diff = datetime.now() - item['time']
         mins = int(max(0, time_diff.total_seconds() / 60))
         st.markdown(f"""
@@ -291,7 +337,7 @@ if brand_mentions:
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.info("No recent mentions found. Waiting for updates...")
+    st.info(f"No recent data streams captured for key: '{active_query}'. Adjust parameters or force sync.")
 
 if auto_refresh:
     time.sleep(refresh_interval)
