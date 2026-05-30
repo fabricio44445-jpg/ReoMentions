@@ -324,36 +324,55 @@ if mentions:
     else:
         st.write("No data found in the last 14 days for this region.")
         
+# --- 🤖 AI TREND SUMMARY (DAILY + WEEKLY CONTEXT) ---
 if mentions:
-    seven_days_ago = datetime.now() - pd.Timedelta(days=7)
-    recent_mentions = [m for m in mentions if pd.to_datetime(m['time']).tz_localize(None) >= seven_days_ago]
+    now = datetime.now()
+    one_day_ago = now - pd.Timedelta(days=1)
+    seven_days_ago = now - pd.Timedelta(days=7)
     
-    if recent_mentions:
-        all_words = []
-        ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new', 'les', 'des', 'und', 'der', 'die', 'das', 'pour', 'sur', 'ist', 'von', 'est', 'une'}
-        
-        for m in recent_mentions:
+    daily_mentions = [m for m in mentions if pd.to_datetime(m['time']).tz_localize(None) >= one_day_ago]
+    weekly_mentions = [m for m in mentions if pd.to_datetime(m['time']).tz_localize(None) >= seven_days_ago]
+    
+    ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new', 'les', 'des', 'und', 'der', 'die', 'das', 'pour', 'sur', 'ist', 'von', 'est', 'une'}
+    
+    # 1. Calculate Weekly Macro Trend
+    weekly_top_topic = "General Security"
+    if weekly_mentions:
+        w_words = []
+        for m in weekly_mentions:
             words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
-            all_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
+            w_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
+        w_counts = Counter(w_words).most_common(1)
+        if w_counts:
+            weekly_top_topic = w_counts[0][0].title()
+
+    # 2. Calculate Daily Pulse
+    if daily_mentions:
+        d_words = []
+        for m in daily_mentions:
+            words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
+            d_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
             
-        word_counts = Counter(all_words).most_common(2)
+        d_counts = Counter(d_words).most_common(1)
         
-        if word_counts:
-            top_topic = word_counts[0][0].upper()
-            related_mentions = [m for m in recent_mentions if top_topic.lower() in m['title'].lower()]
+        if d_counts:
+            daily_top_topic = d_counts[0][0].title()
+            related_mentions = [m for m in daily_mentions if daily_top_topic.lower() in m['title'].lower()]
             
             if not related_mentions:
-                related_mentions = recent_mentions
+                related_mentions = daily_mentions
                 
             avg_score = sum(m['score'] for m in related_mentions) / len(related_mentions)
             overall_sentiment = "positive 🟢" if avg_score > 0.15 else "negative 🔴" if avg_score < -0.15 else "neutral ⚪"
             
-            st.info(f"### 🧠 AI Weekly Briefing\n"
-                    f"Based on our analysis of trends over the last 7 days for the selected region, discussion is heavily indexing toward concepts surrounding **'{top_topic}'**. "
-                    f"General user expression on this specific focus area is leaning **{overall_sentiment}**. "
-                    f"The core sample mention steering this distribution is: *\"{related_mentions[0]['title']}\"*.")
+            st.info(f"### 🧠 AI Daily Briefing\n"
+                    f"**Today's Pulse:** Over the last 24 hours, discussion is heavily indexing toward **'{daily_top_topic}'** "
+                    f"(leaning **{overall_sentiment}**). The top driving headline right now is: *\"{related_mentions[0]['title']}\"*\n\n"
+                    f"**Weekly Macro Trend:** For context, the broader, overarching topic across the last 7 days remains focused on **'{weekly_top_topic}'**.")
         else:
-            st.info("### 🧠 AI Weekly Briefing\nDiscussion volumes are stable across general security parameters without singular localized topic breakouts this week.")
+            st.info(f"### 🧠 AI Daily Briefing\nDiscussion volumes are stable today without singular localized breakouts. The broader weekly trend remains focused on **'{weekly_top_topic}'**.")
+    else:
+         st.info(f"### 🧠 AI Daily Briefing\nNo major spikes in the last 24 hours. The broader weekly trend remains focused on **'{weekly_top_topic}'**.")
 
 # --- NEW PAGINATION LOGIC (NUMBERED BUTTONS) ---
 if mentions:
@@ -362,22 +381,18 @@ if mentions:
     items_per_page = 10
     total_pages = max(1, (len(mentions) + items_per_page - 1) // items_per_page)
     
-    # Catch out-of-bounds pages when switching filters
     if st.session_state.current_page > total_pages:
         st.session_state.current_page = 1
         
-    # --- The Sliding Window Math ---
     max_visible_pages = 7
     start_page = max(1, st.session_state.current_page - max_visible_pages // 2)
     end_page = min(total_pages, start_page + max_visible_pages - 1)
     
-    # Adjust start_page if we are near the very end
     if end_page - start_page + 1 < max_visible_pages:
         start_page = max(1, end_page - max_visible_pages + 1)
         
     page_numbers = list(range(start_page, end_page + 1))
     
-    # Build dynamic columns for layout: [Prev] [1] [2] [3]... [Next]
     cols = st.columns([1.5] + [1]*len(page_numbers) + [1.5])
     
     with cols[0]:
@@ -385,10 +400,8 @@ if mentions:
             st.session_state.current_page -= 1
             st.rerun()
             
-    # Inject the actual page numbers
     for i, page_num in enumerate(page_numbers):
         with cols[i + 1]:
-            # Highlight active page in blue using Streamlit's 'primary' button type
             button_type = "primary" if page_num == st.session_state.current_page else "secondary"
             if st.button(str(page_num), key=f"btn_page_{page_num}", type=button_type, use_container_width=True):
                 st.session_state.current_page = page_num
@@ -399,7 +412,6 @@ if mentions:
             st.session_state.current_page += 1
             st.rerun()
             
-    # --- DISPLAY FEED LOGIC ---
     start_idx = (st.session_state.current_page - 1) * items_per_page
     end_idx = start_idx + items_per_page
     
