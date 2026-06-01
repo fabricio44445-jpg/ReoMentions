@@ -47,9 +47,28 @@ st.markdown("""
 
 # Memory Management for Custom Filters
 if "search_filters" not in st.session_state: 
-    st.session_state.search_filters = ["Reolink", "omvi", "Magicam"]
+    st.session_state.search_filters = ["Reolink", "Reolink ONVIF", "Magicam"]
 if "current_page" not in st.session_state: 
     st.session_state.current_page = 1
+
+# --- TIME FORMATTING HELPER ---
+def format_time_ago(past_time):
+    time_diff = datetime.now() - past_time
+    total_seconds = int(time_diff.total_seconds())
+    
+    if total_seconds < 60:
+        return "just now"
+    
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+        
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+        
+    days = hours // 24
+    return f"{days}d ago"
 
 # --- 2. SIDEBAR CONTROLS ---
 with st.sidebar:
@@ -215,7 +234,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 🤖 RESTORED AI BRIEFING ENGINE (DAILY BREAKOUT + WEEKLY MACRO TOPIC) ---
+# --- 🤖 AI BRIEFING ENGINE ---
 if target_brand_mentions:
     now = datetime.now()
     one_day_ago = now - pd.Timedelta(days=1)
@@ -226,7 +245,6 @@ if target_brand_mentions:
     
     ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new', 'les', 'des', 'und', 'der', 'die', 'das', 'pour', 'sur', 'ist', 'von', 'est', 'une', 'omvi', 'onvif', 'magicam'}
     
-    # Step 1: Extract 7-Day Macro Hottest Topic
     weekly_top_topic = "General Conversations"
     if weekly_mentions:
         w_words = []
@@ -237,7 +255,6 @@ if target_brand_mentions:
         if w_counts:
             weekly_top_topic = w_counts[0][0].title()
 
-    # Step 2: Extract 24-Hour Daily Pulse Briefing
     if daily_mentions:
         d_words = []
         for m in daily_mentions:
@@ -324,14 +341,14 @@ if target_brand_mentions:
     start_idx = (st.session_state.current_page - 1) * items_per_page
     
     for item in target_brand_mentions[start_idx:start_idx + items_per_page]:
-        time_diff = datetime.now() - item['time']
-        mins = int(max(0, time_diff.total_seconds() / 60))
+        # Utilizing the new adaptive time formatter helper function
+        formatted_age = format_time_ago(item['time'])
         st.markdown(f"""
         <div class="modern-card">
             <h3 class="card-title">{PLATFORM_ICONS.get(item['source'], "📌")} {item['title']}</h3>
             <span class="card-sentiment">{item['sentiment']}</span>
             <div class="card-bottom">
-                <span>👤 <strong>{item['author']}</strong> • 📅 {mins}m ago • via {item['source']} • {item['language']}</span>
+                <span>👤 <strong>{item['author']}</strong> • 📅 {formatted_age} • via {item['source']} • {item['language']}</span>
                 <a href="{item['link']}" target="_blank" class="card-link">Open Link ↗</a>
             </div>
         </div>
