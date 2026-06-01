@@ -124,19 +124,24 @@ def fetch_target_data(target_string, brand_label):
     entries = []
     
     for lang_name, l_params in lang_configs.items():
-        # Global Baseline Feeds (Now includes Reddit, Blogs, and Podcasts globally)
+        # Core engines that inherently support language filtering
         FEEDS = {
             "Google News": f"https://news.google.com/rss/search?q={encoded_query}&{l_params['gnews']}",
             "Bing News": f"https://www.bing.com/news/search?q={encoded_query}&format=rss&{l_params['bing']}",
-            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={encoded_query}",
-            "Reddit": f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new",
-            "Blogs": f"https://wordpress.com/tag/{query_no_space}/feed",
-            "Medium": f"https://medium.com/feed/tag/{query_no_space}"
+            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={encoded_query}"
         }
         
+        # FIX: Quarantine English-dominant/no-filter APIs entirely to the EN loop
+        if lang_name == "EN 🇺🇸":
+            FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
+            FEEDS["Hacker News"] = f"https://hnrss.org/newest?q={encoded_query}"
+            FEEDS["Medium"] = f"https://medium.com/feed/tag/{query_no_space}"
+            FEEDS["Blogs"] = f"https://wordpress.com/tag/{query_no_space}/feed"
+            FEEDS["Flickr"] = f"https://www.flickr.com/services/feeds/photos_public.gne?tags={query_no_space}&format=rss_200"
+
         # Inject Dedicated European High-Traffic Tech Aggregators
         if lang_name == "DE 🇩🇪" and "EuroTech Hub" in selected_sources:
-            FEEDS["EuroTech Hub"] = f"https://www.computerbase.de/rss/news.xml" # Monitored via Title Matching downstream
+            FEEDS["EuroTech Hub"] = f"https://www.computerbase.de/rss/news.xml"
             
         if lang_name == "FR 🇫🇷" and "EuroTech Hub" in selected_sources:
             FEEDS["EuroTech Hub"] = f"https://www.lesnumeriques.com/rss.xml"
@@ -146,7 +151,7 @@ def fetch_target_data(target_string, brand_label):
                 try:
                     feed = feedparser.parse(url)
                     for entry in feed.entries:
-                        # For general EuroTech hubs, perform keyword filtering to keep it strictly relevant
+                        # Ensure generic Euro sites actually mention the target
                         if source == "EuroTech Hub" and target_string.lower() not in entry.title.lower():
                             continue
                             
@@ -161,11 +166,10 @@ def fetch_target_data(target_string, brand_label):
                         })
                 except: pass 
 
-        # Global iTunes Podcast API Access
-        if "Podcasts" in selected_sources:
+        # Limit iTunes Podcasts to English loop as its regional search is unreliable via simple term matching
+        if "Podcasts" in selected_sources and lang_name == "EN 🇺🇸":
             try:
-                lang_code = "de" if lang_name == "DE 🇩🇪" else "fr" if lang_name == "FR 🇫🇷" else "us"
-                podcast_url = f"https://itunes.apple.com/search?term={encoded_query}&entity=podcastEpisode&country={lang_code}&limit=10"
+                podcast_url = f"https://itunes.apple.com/search?term={encoded_query}&entity=podcastEpisode&limit=10"
                 response = requests.get(podcast_url, timeout=5).json()
                 for result in response.get('results', []):
                     entries.append({
@@ -174,11 +178,11 @@ def fetch_target_data(target_string, brand_label):
                         "author": result.get('artistName', 'Host'),
                         "link": result.get('trackViewUrl', ''),
                         "time": datetime.strptime(result['releaseDate'], "%Y-%m-%dT%H:%M:%SZ"),
-                        "sentiment": "⚪ Neutral", "score": 0.0, "language": lang_name
+                        "sentiment": "⚪ Neutral", "score": 0.0, "language": "EN 🇺🇸"
                     })
             except: pass
 
-        # Global YouTube Engine
+        # Global YouTube Engine (Supports localized relevance natively)
         if "YouTube" in selected_sources and YOUTUBE_API_KEY:
             try:
                 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
@@ -205,9 +209,11 @@ if competitor_input:
     comp_mentions = fetch_target_data(competitor_input.strip(), competitor_input.strip())
     all_raw_mentions.extend(comp_mentions)
 
+# Deduplicate identical links
 unique_entries = {m['link']: m for m in all_raw_mentions}
 all_raw_mentions = list(unique_entries.values())
 
+# Apply active language filter to the feed
 if display_language != "All Languages 🌍":
     mentions = [m for m in all_raw_mentions if m['language'] == display_language]
 else:
@@ -235,7 +241,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 🤖 RESTORED AI BRIEFING ENGINE ---
+# --- 🤖 AI BRIEFING ENGINE ---
 if target_brand_mentions:
     now = datetime.now()
     one_day_ago = now - pd.Timedelta(days=1)
