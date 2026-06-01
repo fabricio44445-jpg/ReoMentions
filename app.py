@@ -47,7 +47,7 @@ st.markdown("""
 
 # Memory Management for Custom Filters
 if "search_filters" not in st.session_state: 
-    st.session_state.search_filters = ["Reolink", "Reolink ONVIF", "Magicam"]
+    st.session_state.search_filters = ["Reolink", "omvi", "Magicam"]
 if "current_page" not in st.session_state: 
     st.session_state.current_page = 1
 
