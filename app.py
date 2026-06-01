@@ -1,343 +1,155 @@
-import streamlit as st
-import feedparser
-from datetime import datetime
-import time
-from googleapiclient.discovery import build
-import pandas as pd
+import streamlit as st, feedparser, pandas as pd, urllib.parse, altair as alt, time, nltk
+from datetime import datetime, timedelta
 from textblob import TextBlob
 from collections import Counter
-import nltk
-import urllib.parse
-import altair as alt
+from googleapiclient.discovery import build
 
-# --- AUTO-DOWNLOAD REQUIRED AI COMPONENTS ---
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
+# --- SETUP & COMPONENTS ---
+try: nltk.data.find('tokenizers/punkt')
+except: nltk.download('punkt', quiet=True)
 
-feedparser.USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 YOUTUBE_API_KEY = "AIzaSyCB26TbgxGyRiWCwO0H_ptUQsH8tM0SpGQ"
+ICONS = {"Reddit": "🟧", "Google News": "📰", "YouTube": "🟥", "Blogs & EuroTech": "✍️"}
 
-PLATFORM_ICONS = {
-    "Reddit": "🟧", 
-    "Google News": "📰", 
-    "YouTube": "🟥", 
-    "Blogs & EuroTech": "✍️"
-}
+st.set_page_config(page_title="Global Marketing Hub", page_icon="🧠", layout="wide")
+st.markdown("<style>#MainMenu, footer {visibility: hidden;} .modern-card {background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 16px;} .card-title {margin: 0 0 8px 0; font-size: 1.15rem;} .card-bottom {display: flex; justify-content: space-between; font-size: 0.85rem; color: #64748b;} .card-link {color: #3b82f6; text-decoration: none; font-weight: bold;} .metric-val {font-size: 2rem; font-weight: bold;}</style>", unsafe_allow_html=True)
 
-# --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Reolink Global Marketing Hub", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+for k, v in {"filters": ["Reolink", "omvi", "Magicam"], "page": 1}.items():
+    st.session_state.setdefault(k, v)
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght=400;500;600;700&display=swap');
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
-    .modern-card { background-color: #ffffff; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 1px solid #f1f5f9; }
-    @media (prefers-color-scheme: dark) { .modern-card { background-color: #1e293b; border: 1px solid #334155; } }
-    .card-title { font-size: 1.15rem; font-weight: 600; margin-bottom: 8px; margin-top: 0; line-height: 1.4; }
-    .card-sentiment { font-size: 0.85rem; font-weight: 600; margin-bottom: 12px; display: inline-block; padding: 2px 8px; border-radius: 12px; background: rgba(0,0,0,0.05); }
-    .card-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; color: #64748b; font-weight: 500; }
-    .card-link { text-decoration: none; color: #3b82f6; font-weight: 600; background-color: rgba(59,130,246,0.1); padding: 6px 12px; border-radius: 6px; }
-    .metric-label { font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 600; margin-bottom: 4px; }
-    .metric-value { font-size: 2rem; font-weight: 700; }
-</style>
-""", unsafe_allow_html=True)
+# --- HELPER FUNCTIONS ---
+def get_sentiment(text):
+    s = TextBlob(text).sentiment.polarity
+    return ("🟢 Positive", s) if s > 0.15 else ("🔴 Negative", s) if s < -0.15 else ("⚪ Neutral", s)
 
-# Session Memory
-if "search_filters" not in st.session_state: 
-    st.session_state.search_filters = ["Reolink", "Reolink ONVIF", "Magicam"]
-if "current_page" not in st.session_state: 
-    st.session_state.current_page = 1
+def time_ago(dt):
+    secs = int((datetime.now() - dt).total_seconds())
+    return "just now" if secs < 60 else f"{secs//60}m ago" if secs < 3600 else f"{secs//3600}h ago" if secs < 86400 else f"{secs//86400}d ago"
 
-# --- TIME FORMATTING HELPER ---
-def format_time_ago(past_time):
-    time_diff = datetime.now() - past_time
-    total_seconds = int(time_diff.total_seconds())
-    if total_seconds < 60: return "just now"
-    minutes = total_seconds // 60
-    if minutes < 60: return f"{minutes}m ago"
-    hours = minutes // 60
-    if hours < 24: return f"{hours}h ago"
-    days = hours // 24
-    return f"{days}d ago"
+def get_top_topic(mentions):
+    ignore = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'this', 'new', 'omvi', 'magicam'}
+    words = [w.strip("?,.:;\"'()![]{}").lower() for m in mentions for w in m['title'].split() if w.strip("?,.:;\"'()![]{}").lower() not in ignore and len(w)>3]
+    return Counter(words).most_common(1)[0][0].title() if words else "General"
 
-# --- 2. SIDEBAR CONTROLS ---
+# --- DATA ENGINE (Cached for Speed & Quota Saving) ---
+@st.cache_data(ttl=900)
+def fetch_data(queries, active_srcs):
+    entries = []
+    for q in queries:
+        if not q: continue
+        enc_q, clean_q = urllib.parse.quote(q), q.replace(' ', '')
+        feeds = {}
+        
+        if "Google News" in active_srcs: feeds["Google News"] = f"https://news.google.com/rss/search?q={enc_q}"
+        if "Reddit" in active_srcs: feeds["Reddit"] = f"https://www.reddit.com/search.rss?q={enc_q}&sort=new"
+        if "Blogs & EuroTech" in active_srcs:
+            feeds.update({"Blogs & EuroTech": f"https://wordpress.com/tag/{clean_q}/feed",
+                          "ComputerBase DE": "https://www.computerbase.de/rss/news.xml",
+                          "Les Numériques FR": "https://www.lesnumeriques.com/rss.xml"})
+
+        for name, url in feeds.items():
+            try:
+                for e in feedparser.parse(url).entries:
+                    if ("DE" in name or "FR" in name) and q.lower() not in e.title.lower(): continue
+                    dt = e.get('published_parsed') or e.get('updated_parsed')
+                    label, score = get_sentiment(e.title)
+                    entries.append({"brand": q, "source": "Blogs & EuroTech" if "DE" in name or "FR" in name else name, 
+                                    "title": e.title, "author": e.get('author', 'Creator'), "link": e.link, 
+                                    "time": datetime(*dt[:6]) if dt else datetime.now(), "sentiment": label, "score": score})
+            except: pass
+
+        if "YouTube" in active_srcs and YOUTUBE_API_KEY:
+            try:
+                res = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY).search().list(q=q, part='snippet', type='video', order='date', maxResults=20).execute()
+                for i in res.get('items', []):
+                    if vid := i['id'].get('videoId'):
+                        label, score = get_sentiment(i['snippet']['title'])
+                        entries.append({"brand": q, "source": "YouTube", "title": i['snippet']['title'], "author": i['snippet']['channelTitle'],
+                                        "link": f"http://youtube.com/watch?v={vid}", 
+                                        "time": datetime.strptime(i['snippet']['publishedAt'], "%Y-%m-%dT%H:%M:%SZ"), 
+                                        "sentiment": label, "score": score})
+            except Exception as e: st.sidebar.error(f"YouTube Error: {e}")
+            
+    return list({m['link']: m for m in entries}.values()) # Deduplicate
+
+# --- SIDEBAR CONTROLS ---
 with st.sidebar:
-    st.title("⚙️ Engine Controls")
+    st.title("⚙️ Controls")
+    tgt = st.radio("Target:", st.session_state.filters)
     
-    st.subheader("🎯 Active Target")
-    active_query = st.radio("Select Target Query:", st.session_state.search_filters, label_visibility="collapsed")
-    
-    with st.expander("➕ Add Custom Search Filter"):
-        new_filter = st.text_input("Enter keywords:", placeholder="e.g., Reolink Altas")
-        if st.button("Add to Monitor List", use_container_width=True):
-            if new_filter and new_filter not in st.session_state.search_filters:
-                st.session_state.search_filters.append(new_filter)
-                st.rerun()
-
-    with st.expander("➖ Remove Custom Filter"):
-        removable = [f for f in st.session_state.search_filters if f != "Reolink"]
-        if removable:
-            to_remove = st.selectbox("Select filter to delete:", removable)
-            if st.button("Delete Filter", use_container_width=True):
-                st.session_state.search_filters.remove(to_remove)
-                st.rerun()
+    if (new_f := st.text_input("➕ Add Filter:")) and st.button("Add") and new_f not in st.session_state.filters:
+        st.session_state.filters.append(new_f); st.rerun()
+        
+    removable = [f for f in st.session_state.filters if f != "Reolink"]
+    if removable and (del_f := st.selectbox("➖ Remove:", removable)) and st.button("Delete"):
+        st.session_state.filters.remove(del_f); st.rerun()
 
     st.divider()
-    st.subheader("⚔️ Benchmarking")
-    competitor_input = st.text_input("Track companion brand:", placeholder="e.g. Arlo")
-    
-    st.subheader("🗓️ Campaign Marker")
-    event_date = st.date_input("Highlight event:", value=None)
-    event_name = st.text_input("Event Tag Name:", placeholder="Global Launch") if event_date else None
+    comp = st.text_input("⚔️ Competitor:", placeholder="e.g. Arlo")
+    evt_date = st.date_input("🗓️ Event Date:", value=None)
+    evt_name = st.text_input("Event Name:") if evt_date else None
 
     st.divider()
-    sort_by = st.selectbox("🧠 Sort Target Feed By:", ["Newest First", "Most Positive 🟢", "Most Negative 🔴"])
-    selected_sources = st.multiselect("📡 Active Streams:", list(PLATFORM_ICONS.keys()), default=["Reddit", "Google News", "YouTube", "Blogs & EuroTech"])
+    sort_by = st.selectbox("🧠 Sort By:", ["Newest First", "Most Positive 🟢", "Most Negative 🔴"])
+    srcs = st.multiselect("📡 Streams:", list(ICONS.keys()), default=list(ICONS.keys()))
     
     auto_refresh = st.toggle("Enable Auto-Refresh", value=True)
-    refresh_interval = st.slider("Refresh Interval (sec)", min_value=1800, max_value=7200, value=3600)
-    if st.button("🔄 Force Data Sync", use_container_width=True):
-        st.session_state.current_page = 1
-        st.rerun()
+    refresh_interval = st.slider("Refresh Interval (sec)", 300, 3600, 900)
+    if st.button("🔄 Force Data Sync"): st.cache_data.clear(); st.session_state.page = 1; st.rerun()
 
-# --- 3. CONSOLIDATED CORE-4 PROCESSING ENGINE ---
-def analyze_sentiment(text):
-    score = TextBlob(text).sentiment.polarity
-    if score > 0.15: return "🟢 Positive", score
-    elif score < -0.15: return "🔴 Negative", score
-    else: return "⚪ Neutral", score
+# --- EXECUTE ENGINE & RENDER UI ---
+mentions = fetch_data([tgt, comp], srcs)
+tgt_mentions = sorted([m for m in mentions if m['brand'] == tgt], 
+                      key=lambda x: x['time'] if "Newest" in sort_by else x['score'], 
+                      reverse="Negative" not in sort_by)
 
-def fetch_target_data(target_string, brand_label):
-    encoded_query = urllib.parse.quote(target_string)
-    query_no_space = target_string.replace(' ', '')
-    entries = []
-    
-    # Unified Global Baseline Feeds (Fires requests without restricted language/country tags)
-    FEEDS = {}
-    if "Google News" in selected_sources:
-        FEEDS["Google News"] = f"https://news.google.com/rss/search?q={encoded_query}"
-    if "Reddit" in selected_sources:
-        FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
-    if "Blogs & EuroTech" in selected_sources:
-        FEEDS["WordPress Blogs"] = f"https://wordpress.com/tag/{query_no_space}/feed"
-        FEEDS["ComputerBase DE"] = f"https://www.computerbase.de/rss/news.xml"
-        FEEDS["Les Numériques FR"] = f"https://www.lesnumeriques.com/rss.xml"
+st.title(f"🧠 Hub: {tgt}")
+st.markdown(f"**Target Volume:** {len(tgt_mentions)} | **Competitor Volume:** {len([m for m in mentions if m['brand']==comp])}")
 
-    # Scrape Configured RSS Endpoints
-    for internal_name, url in FEEDS.items():
-        try:
-            feed = feedparser.parse(url)
-            # Normalize display mapping for localized Euro sites
-            display_source = "Blogs & EuroTech" if "Blogs" in internal_name or "DE" in internal_name or "FR" in internal_name else internal_name
-            
-            for entry in feed.entries:
-                # Downstream matching filter for high-volume localized tech boards
-                if ("DE" in internal_name or "FR" in internal_name) and target_string.lower() not in entry.title.lower():
-                    continue
-                    
-                dt = entry.get('published_parsed') or entry.get('updated_parsed')
-                author = entry.get('author', 'Independent Creator')
-                sentiment_label, sentiment_score = analyze_sentiment(entry.title)
-                
-                entries.append({
-                    "brand": brand_label, 
-                    "source": display_source, 
-                    "title": entry.title,
-                    "author": author, 
-                    "link": entry.link,
-                    "time": datetime(*dt[:6]) if dt else datetime.now(),
-                    "sentiment": sentiment_label, 
-                    "score": sentiment_score
-                })
-        except: pass 
-
-    # Consolidated Global YouTube Engine (With Error Reporting Visible on Sidebar)
-    if "YouTube" in selected_sources and YOUTUBE_API_KEY:
-        try:
-            youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-            request = youtube.search().list(
-                q=target_string, 
-                part='snippet', 
-                type='video', 
-                order='date', 
-                maxResults=20
-            )
-            response = request.execute()
-            for item in response.get('items', []):
-                video_id = item['id'].get('videoId')
-                if video_id:
-                    pub_time = datetime.strptime(item['snippet']['publishedAt'], "%Y-%m-%dT%H:%M:%SZ")
-                    sentiment_label, sentiment_score = analyze_sentiment(item['snippet']['title'])
-                    entries.append({
-                        "brand": brand_label, 
-                        "source": "YouTube", 
-                        "title": item['snippet']['title'],
-                        "author": item['snippet']['channelTitle'], 
-                        "link": f"https://www.youtube.com/watch?v={video_id}",
-                        "time": pub_time, 
-                        "sentiment": sentiment_label, 
-                        "score": sentiment_score
-                    })
-        except Exception as e:
-            st.sidebar.error(f"🔴 YouTube API Error: {str(e)}")
-            
-    return entries
-
-# Process Multi-Stream Architecture
-mentions = fetch_target_data(active_query, active_query)
-
-if competitor_input:
-    comp_mentions = fetch_target_data(competitor_input.strip(), competitor_input.strip())
-    mentions.extend(comp_mentions)
-
-# Deduplicate identical links globally
-unique_entries = {m['link']: m for m in mentions}
-mentions = list(unique_entries.values())
-
-target_brand_mentions = [m for m in mentions if m['brand'] == active_query]
-
-if sort_by == "Newest First": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['time'], reverse=True)
-elif sort_by == "Most Positive 🟢": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['score'], reverse=True)
-elif sort_by == "Most Negative 🔴": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['score'])
-
-# --- 4. MAIN DASHBOARD UI ---
-st.title(f"🧠 Global Intelligence Hub: {active_query}")
-
-st.markdown(f"""
-<div style="display: flex; gap: 16px; margin-bottom: 24px;">
-    <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
-        <div class="metric-label">Active Monitoring Stream Volume</div>
-        <div class="metric-value" style="color: #3b82f6;">{len(target_brand_mentions)} Mentions</div>
-    </div>
-    <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
-        <div class="metric-label">Cross-Benchmark Volume ({competitor_input or 'None'})</div>
-        <div class="metric-value" style="color: #ef4444;">{len([m for m in mentions if m['brand']==competitor_input]) if competitor_input else 0} Mentions</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# --- 🤖 AI BRIEFING ENGINE ---
-if target_brand_mentions:
+if tgt_mentions:
     now = datetime.now()
-    one_day_ago = now - pd.Timedelta(days=1)
-    seven_days_ago = now - pd.Timedelta(days=7)
+    d_mentions = [m for m in tgt_mentions if m['time'] >= now - timedelta(days=1)]
+    w_mentions = [m for m in tgt_mentions if m['time'] >= now - timedelta(days=7)]
     
-    daily_mentions = [m for m in target_brand_mentions if pd.to_datetime(m['time']).tz_localize(None) >= one_day_ago]
-    weekly_mentions = [m for m in target_brand_mentions if pd.to_datetime(m['time']).tz_localize(None) >= seven_days_ago]
+    d_topic, w_topic = get_top_topic(d_mentions), get_top_topic(w_mentions)
     
-    ignore_words = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'you', 'with', 'this', 'new', 'les', 'des', 'und', 'der', 'die', 'das', 'pour', 'sur', 'ist', 'von', 'est', 'une', 'omvi', 'onvif', 'magicam'}
-    
-    weekly_top_topic = "General Conversations"
-    if weekly_mentions:
-        w_words = []
-        for m in weekly_mentions:
-            words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
-            w_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
-        w_counts = Counter(w_words).most_common(1)
-        if w_counts: weekly_top_topic = w_counts[0][0].title()
-
-    if daily_mentions:
-        d_words = []
-        for m in daily_mentions:
-            words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
-            d_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
-        d_counts = Counter(d_words).most_common(1)
-        
-        if d_counts:
-            daily_top_topic = d_counts[0][0].title()
-            related_mentions = [m for m in daily_mentions if daily_top_topic.lower() in m['title'].lower()]
-            if not related_mentions: related_mentions = daily_mentions
-            avg_score = sum(m['score'] for m in related_mentions) / len(related_mentions)
-            overall_sentiment = "positive 🟢" if avg_score > 0.15 else "negative 🔴" if avg_score < -0.15 else "neutral ⚪"
-            
-            st.info(f"### 🧠 AI Daily Briefing\n"
-                    f"**Today's Pulse:** Over the last 24 hours, global chatter around **'{active_query}'** is heavily focused on the keyword topic **'{daily_top_topic}'** "
-                    f"(trending **{overall_sentiment}**). The primary narrative driver right now is: *\"{related_mentions[0]['title']}\"*\n\n"
-                    f"**Weekly Macro Context:** Across the entire last 7 days, the dominant trending topic remains anchored on **'{weekly_top_topic}'**.")
-        else:
-            st.info(f"### 🧠 AI Daily Briefing\nDiscussion trends are stable for '{active_query}' today without localized spikes. The broader 7-day macro trend remains focused on **'{weekly_top_topic}'**.")
+    if d_mentions:
+        driver = next((m for m in d_mentions if d_topic.lower() in m['title'].lower()), d_mentions[0])
+        st.info(f"### 🧠 AI Daily Briefing\n**Today's Pulse:** Focused on **'{d_topic}'** ({driver['sentiment']}). Driver: *\"{driver['title']}\"*\n\n**Weekly Macro:** Anchored on **'{w_topic}'**.")
     else:
-         st.info(f"### 🧠 AI Daily Briefing\nNo breaking spikes captured in the last 24 hours for this keyword. The broader 7-day macro trend remains focused on **'{weekly_top_topic}'**.")
+        st.info(f"### 🧠 AI Daily Briefing\nStable today. Weekly macro focus: **'{w_topic}'**.")
 
-# --- SHARE OF VOICE TIMELINE ---
 if mentions:
-    st.markdown("### 📊 Timeline Share of Voice (Last 14 Days)")
+    st.markdown("### 📊 14-Day Timeline")
     df = pd.DataFrame(mentions)
-    df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
-    df = df[df['time'] >= (datetime.now() - pd.Timedelta(days=14))]
+    df['Date'] = pd.to_datetime(df['time']).dt.date
+    df = df[df['Date'] >= (datetime.now().date() - timedelta(days=14))]
     
     if not df.empty:
-        df['Date'] = df['time'].dt.date
-        chart_data = df.groupby(['Date', 'brand']).size().reset_index(name='Mentions')
-        
-        base = alt.Chart(chart_data).encode(
-            x=alt.X('Date:T', title=''),
-            y=alt.Y('Mentions:Q', title='Volume'),
-            color=alt.Color('brand:N', scale=alt.Scale(range=['#3b82f6', '#ef4444']), legend=alt.Legend(title="Keyword Streams"))
-        )
-        line = base.mark_line(interpolate='monotone', strokeWidth=3)
-        points = base.mark_circle(size=80, opacity=1)
-        chart = line + points
-        
-        if event_date:
-            event_df = pd.DataFrame({'Date': [pd.to_datetime(event_date)]})
-            rule = alt.Chart(event_df).mark_rule(color='#10b981', strokeWidth=2, strokeDash=[5, 5]).encode(x='Date:T')
-            if event_name:
-                text = alt.Chart(event_df).mark_text(align='left', dx=5, dy=-120, color='#10b981', fontWeight='bold').encode(
-                    x='Date:T', text=alt.value(f"🚀 {event_name}")
-                )
-                chart = chart + rule + text
-            else:
-                chart = chart + rule
-                
-        st.altair_chart(chart.properties(height=300), use_container_width=True)
+        chart = alt.Chart(df.groupby(['Date', 'brand']).size().reset_index(name='Vol')).encode(x='Date:T', y='Vol:Q', color='brand:N').mark_line(point=True)
+        if evt_date:
+            rule = alt.Chart(pd.DataFrame({'Date': [pd.to_datetime(evt_date)]})).mark_rule(color='#10b981', strokeDash=[5,5]).encode(x='Date:T')
+            chart += rule + rule.mark_text(text=f"🚀 {evt_name}", align='left', dx=5, dy=-120) if evt_name else rule
+        st.altair_chart(chart, use_container_width=True)
 
-st.divider()
-
-# --- THE STREAMS FEED ---
-if target_brand_mentions:
-    st.markdown(f"### 📰 Stream Monitor ({len(target_brand_mentions)} Entries Match)")
-    items_per_page = 10
-    total_pages = max(1, (len(target_brand_mentions) + items_per_page - 1) // items_per_page)
-    if st.session_state.current_page > total_pages: st.session_state.current_page = 1
-        
-    start_page = max(1, st.session_state.current_page - 3)
-    end_page = min(total_pages, start_page + 6)
-    if end_page - start_page < 6: start_page = max(1, end_page - 6)
-        
-    cols = st.columns([1.5] + [1]*(end_page - start_page + 1) + [1.5])
-    with cols[0]:
-        if st.button("⬅️ Prev", disabled=(st.session_state.current_page == 1), use_container_width=True):
-            st.session_state.current_page -= 1; st.rerun()
-            
-    for i, p in enumerate(range(start_page, end_page + 1)):
-        with cols[i + 1]:
-            if st.button(str(p), type="primary" if p == st.session_state.current_page else "secondary", use_container_width=True):
-                st.session_state.current_page = p; st.rerun()
-                
-    with cols[-1]:
-        if st.button("Next ➡️", disabled=(st.session_state.current_page == total_pages), use_container_width=True):
-            st.session_state.current_page += 1; st.rerun()
-            
-    start_idx = (st.session_state.current_page - 1) * items_per_page
+if tgt_mentions:
+    st.markdown(f"### 📰 Stream")
+    items_per_page, total_pages = 10, max(1, (len(tgt_mentions) + 9) // 10)
+    st.session_state.page = min(st.session_state.page, total_pages)
     
-    for item in target_brand_mentions[start_idx:start_idx + items_per_page]:
-        formatted_age = format_time_ago(item['time'])
-        st.markdown(f"""
-        <div class="modern-card">
-            <h3 class="card-title">{PLATFORM_ICONS.get(item['source'], "📌")} {item['title']}</h3>
-            <span class="card-sentiment">{item['sentiment']}</span>
-            <div class="card-bottom">
-                <span>👤 <strong>{item['author']}</strong> • 📅 {formatted_age} • via {item['source']}</span>
-                <a href="{item['link']}" target="_blank" class="card-link">Open Link ↗</a>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-else:
-    st.info(f"No recent data streams captured for key: '{active_query}'. Adjust parameters or force sync.")
+    cols = st.columns([1, 4, 1])
+    if cols[0].button("⬅️ Prev", disabled=(st.session_state.page == 1)): st.session_state.page -= 1; st.rerun()
+    cols[1].markdown(f"<div style='text-align:center;'>Page {st.session_state.page} of {total_pages}</div>", unsafe_allow_html=True)
+    if cols[2].button("Next ➡️", disabled=(st.session_state.page == total_pages)): st.session_state.page += 1; st.rerun()
+
+    for m in tgt_mentions[(st.session_state.page-1)*items_per_page : st.session_state.page*items_per_page]:
+        st.markdown(f"""<div class="modern-card">
+            <h3 class="card-title">{ICONS.get(m['source'], "📌")} {m['title']}</h3>
+            <span style="background:#f1f5f9; padding:4px 8px; border-radius:8px; font-size:0.8rem;">{m['sentiment']}</span>
+            <div class="card-bottom" style="margin-top:12px;">
+                <span>👤 {m['author']} • 📅 {time_ago(m['time'])} • {m['source']}</span>
+                <a href="{m['link']}" target="_blank" class="card-link">Link ↗</a>
+            </div></div>""", unsafe_allow_html=True)
 
 if auto_refresh:
     time.sleep(refresh_interval)
