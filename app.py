@@ -11,7 +11,7 @@ except:
     nltk.download('punkt', quiet=True)
 
 YOUTUBE_API_KEY = "AIzaSyCB26TbgxGyRiWCwO0H_ptUQsH8tM0SpGQ" 
-DB_FILE = "mentions_archive.csv" # The new local memory bank
+DB_FILE = "mentions_archive.csv" 
 
 ICONS = {"Reddit": "🟧", "Google News": "📰", "YouTube": "🟥", "Blogs & EuroTech": "✍️"}
 
@@ -54,7 +54,6 @@ def fetch_data(queries, active_srcs):
         enc_q, clean_q = urllib.parse.quote(q), q.replace(' ', '')
         feeds = {}
         
-        # MAXED OUT LIMITS: Reddit set to 100
         if "Google News" in active_srcs: feeds["Google News"] = f"https://news.google.com/rss/search?q={enc_q}"
         if "Reddit" in active_srcs: feeds["Reddit"] = f"https://www.reddit.com/search.rss?q={enc_q}&sort=new&limit=100"
         if "Blogs & EuroTech" in active_srcs:
@@ -75,7 +74,6 @@ def fetch_data(queries, active_srcs):
 
         if "YouTube" in active_srcs and YOUTUBE_API_KEY:
             try:
-                # MAXED OUT LIMITS: YouTube set to 50
                 res = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY).search().list(q=q, part='snippet', type='video', order='date', maxResults=50).execute()
                 for i in res.get('items', []):
                     if vid := i['id'].get('videoId'):
@@ -86,7 +84,6 @@ def fetch_data(queries, active_srcs):
                                         "sentiment": label, "score": score})
             except Exception as e: st.sidebar.error(f"YouTube Error: {e}")
             
-    # THE DATA TRAP: Save new findings and mix them with historical files
     new_df = pd.DataFrame(entries)
     if not new_df.empty:
         new_df['time'] = pd.to_datetime(new_df['time']).dt.tz_localize(None)
@@ -99,15 +96,11 @@ def fetch_data(queries, active_srcs):
         combined_df = new_df
         
     if not combined_df.empty:
-        # Drop duplicates and keep the rolling 30-day archive
         combined_df = combined_df.drop_duplicates(subset=['link'], keep='first')
         thirty_days_ago = datetime.now() - timedelta(days=30)
         combined_df = combined_df[combined_df['time'] >= thirty_days_ago]
-        
-        # Save back to the local hard drive
         combined_df.to_csv(DB_FILE, index=False)
         
-        # Convert back to standard python format for the UI
         records = combined_df.to_dict('records')
         for r in records: 
             if isinstance(r['time'], pd.Timestamp): r['time'] = r['time'].to_pydatetime()
@@ -175,16 +168,34 @@ if mentions:
             chart += rule + rule.mark_text(text=f"🚀 {evt_name}", align='left', dx=5, dy=-120) if evt_name else rule
         st.altair_chart(chart, use_container_width=True)
 
+# --- THE STREAMS FEED WITH PAGE NUMBER BUTTONS ---
 if tgt_mentions:
     st.markdown(f"### 📰 Stream")
     items_per_page, total_pages = 10, max(1, (len(tgt_mentions) + 9) // 10)
     st.session_state.page = min(st.session_state.page, total_pages)
     
-    cols = st.columns([1, 4, 1])
-    if cols[0].button("⬅️ Prev", disabled=(st.session_state.page == 1)): st.session_state.page -= 1; st.rerun()
-    cols[1].markdown(f"<div style='text-align:center; color:#0f172a;'>Page {st.session_state.page} of {total_pages}</div>", unsafe_allow_html=True)
-    if cols[2].button("Next ➡️", disabled=(st.session_state.page == total_pages)): st.session_state.page += 1; st.rerun()
+    # Calculate a moving window of 5 pages around the current page
+    start_p = max(1, st.session_state.page - 2)
+    end_p = min(total_pages, start_p + 4)
+    p_range = list(range(start_p, end_p + 1))
+    
+    # Create navigation columns flexibly based on how many page buttons exist
+    cols = st.columns([1] + [0.5] * len(p_range) + [1])
+    
+    # Previous Arrow
+    if cols[0].button("⬅️", disabled=(st.session_state.page == 1), use_container_width=True): 
+        st.session_state.page -= 1; st.rerun()
+        
+    # Explicit Page Numbers
+    for idx, p in enumerate(p_range):
+        if cols[idx + 1].button(str(p), type="primary" if p == st.session_state.page else "secondary", use_container_width=True):
+            st.session_state.page = p; st.rerun()
+            
+    # Next Arrow
+    if cols[-1].button("➡️", disabled=(st.session_state.page == total_pages), use_container_width=True): 
+        st.session_state.page += 1; st.rerun()
 
+    # Loop through and render the 10 posts for the active page selection
     for m in tgt_mentions[(st.session_state.page-1)*items_per_page : st.session_state.page*items_per_page]:
         st.markdown(f"""<div class="modern-card">
             <h3 class="card-title">{ICONS.get(m['source'], "📌")} {m['title']}</h3>
