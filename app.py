@@ -23,11 +23,12 @@ YOUTUBE_API_KEY = "AIzaSyCB26TbgxGyRiWCwO0H_ptUQsH8tM0SpGQ"
 PLATFORM_ICONS = {
     "Reddit": "🟧", "Google News": "📰", "Bing News": "🌐", 
     "YouTube": "🟥", "Yahoo News": "🟣", "Hacker News": "👾", 
-    "Medium": "📝", "Flickr": "📷", "Blogs": "✍️", "Podcasts": "🎙️"
+    "Medium": "📝", "Flickr": "📷", "Blogs": "✍️", "Podcasts": "🎙️",
+    "EuroTech Hub": "🇪🇺"
 }
 
 # --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Reolink Marketing Command Center", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Reolink Global Intelligence Hub", page_icon="🌍", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -45,7 +46,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Memory Management for Custom Filters
+# Session Memory
 if "search_filters" not in st.session_state: 
     st.session_state.search_filters = ["Reolink", "Reolink ONVIF", "Magicam"]
 if "current_page" not in st.session_state: 
@@ -55,31 +56,23 @@ if "current_page" not in st.session_state:
 def format_time_ago(past_time):
     time_diff = datetime.now() - past_time
     total_seconds = int(time_diff.total_seconds())
-    
-    if total_seconds < 60:
-        return "just now"
-    
+    if total_seconds < 60: return "just now"
     minutes = total_seconds // 60
-    if minutes < 60:
-        return f"{minutes}m ago"
-        
+    if minutes < 60: return f"{minutes}m ago"
     hours = minutes // 60
-    if hours < 24:
-        return f"{hours}h ago"
-        
+    if hours < 24: return f"{hours}h ago"
     days = hours // 24
     return f"{days}d ago"
 
 # --- 2. SIDEBAR CONTROLS ---
 with st.sidebar:
-    st.title("⚙️ Engine Controls")
+    st.title("⚙️ Global Controls")
     
-    st.subheader("🎯 Active Target Filter")
+    st.subheader("🎯 Target Stream")
     active_query = st.radio("Select Target Query:", st.session_state.search_filters, label_visibility="collapsed")
     
-    # Dynamic Query Adder Block
     with st.expander("➕ Add Custom Search Filter"):
-        new_filter = st.text_input("Enter exact keywords:", placeholder="e.g., Reolink Altas")
+        new_filter = st.text_input("Enter keywords:", placeholder="e.g., Reolink Altas")
         if st.button("Add to Monitor List", use_container_width=True):
             if new_filter and new_filter not in st.session_state.search_filters:
                 st.session_state.search_filters.append(new_filter)
@@ -92,22 +85,19 @@ with st.sidebar:
             if st.button("Delete Filter", use_container_width=True):
                 st.session_state.search_filters.remove(to_remove)
                 st.rerun()
-        else:
-            st.info("No custom filters to remove.")
-    
+
     st.divider()
+    st.subheader("⚔️ Benchmarking")
+    competitor_input = st.text_input("Track companion brand:", placeholder="e.g. Arlo")
     
-    st.subheader("⚔️ Macro Benchmark")
-    competitor_input = st.text_input("Track comparison brand (optional):", placeholder="e.g. Arlo")
-    
-    st.subheader("🗓️ Event Marker")
-    event_date = st.date_input("Highlight campaign event:", value=None)
-    event_name = st.text_input("Event Tag Name:", placeholder="Product Launch") if event_date else None
+    st.subheader("🗓️ Campaign Marker")
+    event_date = st.date_input("Highlight event:", value=None)
+    event_name = st.text_input("Event Tag Name:", placeholder="EU Launch") if event_date else None
 
     st.divider()
     display_language = st.selectbox("🌍 Filter Region:", ["All Languages 🌍", "EN 🇺🇸", "FR 🇫🇷", "DE 🇩🇪"])
     sort_by = st.selectbox("🧠 Sort Target Feed By:", ["Newest First", "Most Positive 🟢", "Most Negative 🔴"])
-    selected_sources = st.multiselect("📡 Active Streams:", list(PLATFORM_ICONS.keys()), default=["Reddit", "Google News", "YouTube", "Podcasts", "Blogs"])
+    selected_sources = st.multiselect("📡 Active Streams:", list(PLATFORM_ICONS.keys()), default=["Reddit", "Google News", "YouTube", "Podcasts", "Blogs", "EuroTech Hub"])
     
     auto_refresh = st.toggle("Enable Auto-Refresh", value=True)
     refresh_interval = st.slider("Refresh Interval (sec)", min_value=1800, max_value=7200, value=3600)
@@ -115,7 +105,7 @@ with st.sidebar:
         st.session_state.current_page = 1
         st.rerun()
 
-# --- 3. CORE PROCESSING ENGINE ---
+# --- 3. CROSS-BORDER PROCESSING ENGINE ---
 lang_configs = {
     "EN 🇺🇸": {"gnews": "hl=en-US&gl=US&ceid=US:en", "bing": "mkt=en-US", "yt": "en", "yahoo": "news.search.yahoo.com"},
     "FR 🇫🇷": {"gnews": "hl=fr&gl=FR&ceid=FR:fr", "bing": "mkt=fr-FR", "yt": "fr", "yahoo": "fr.news.search.yahoo.com"},
@@ -130,27 +120,36 @@ def analyze_sentiment(text):
 
 def fetch_target_data(target_string, brand_label):
     encoded_query = urllib.parse.quote(target_string)
+    query_no_space = target_string.replace(' ', '')
     entries = []
     
     for lang_name, l_params in lang_configs.items():
+        # Global Baseline Feeds (Now includes Reddit, Blogs, and Podcasts globally)
         FEEDS = {
             "Google News": f"https://news.google.com/rss/search?q={encoded_query}&{l_params['gnews']}",
             "Bing News": f"https://www.bing.com/news/search?q={encoded_query}&format=rss&{l_params['bing']}",
-            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={encoded_query}"
+            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={encoded_query}",
+            "Reddit": f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new",
+            "Blogs": f"https://wordpress.com/tag/{query_no_space}/feed",
+            "Medium": f"https://medium.com/feed/tag/{query_no_space}"
         }
-        if lang_name == "EN 🇺🇸":
-            FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
-            FEEDS["Hacker News"] = f"https://hnrss.org/newest?q={encoded_query}"
-            query_no_space = target_string.replace(' ', '')
-            FEEDS["Medium"] = f"https://medium.com/feed/tag/{query_no_space}"
-            FEEDS["Blogs"] = f"https://wordpress.com/tag/{query_no_space}/feed"
-            FEEDS["Flickr"] = f"https://www.flickr.com/services/feeds/photos_public.gne?tags={query_no_space}&format=rss_200"
+        
+        # Inject Dedicated European High-Traffic Tech Aggregators
+        if lang_name == "DE 🇩🇪" and "EuroTech Hub" in selected_sources:
+            FEEDS["EuroTech Hub"] = f"https://www.computerbase.de/rss/news.xml" # Monitored via Title Matching downstream
+            
+        if lang_name == "FR 🇫🇷" and "EuroTech Hub" in selected_sources:
+            FEEDS["EuroTech Hub"] = f"https://www.lesnumeriques.com/rss.xml"
 
         for source, url in FEEDS.items():
             if source in selected_sources:
                 try:
                     feed = feedparser.parse(url)
                     for entry in feed.entries:
+                        # For general EuroTech hubs, perform keyword filtering to keep it strictly relevant
+                        if source == "EuroTech Hub" and target_string.lower() not in entry.title.lower():
+                            continue
+                            
                         dt = entry.get('published_parsed') or entry.get('updated_parsed')
                         author = entry.get('author', 'Independent Creator')
                         sentiment_label, sentiment_score = analyze_sentiment(entry.title)
@@ -162,9 +161,11 @@ def fetch_target_data(target_string, brand_label):
                         })
                 except: pass 
 
-        if "Podcasts" in selected_sources and lang_name == "EN 🇺🇸":
+        # Global iTunes Podcast API Access
+        if "Podcasts" in selected_sources:
             try:
-                podcast_url = f"https://itunes.apple.com/search?term={encoded_query}&entity=podcastEpisode&limit=15"
+                lang_code = "de" if lang_name == "DE 🇩🇪" else "fr" if lang_name == "FR 🇫🇷" else "us"
+                podcast_url = f"https://itunes.apple.com/search?term={encoded_query}&entity=podcastEpisode&country={lang_code}&limit=10"
                 response = requests.get(podcast_url, timeout=5).json()
                 for result in response.get('results', []):
                     entries.append({
@@ -173,14 +174,15 @@ def fetch_target_data(target_string, brand_label):
                         "author": result.get('artistName', 'Host'),
                         "link": result.get('trackViewUrl', ''),
                         "time": datetime.strptime(result['releaseDate'], "%Y-%m-%dT%H:%M:%SZ"),
-                        "sentiment": "⚪ Neutral", "score": 0.0, "language": "EN 🇺🇸"
+                        "sentiment": "⚪ Neutral", "score": 0.0, "language": lang_name
                     })
             except: pass
 
+        # Global YouTube Engine
         if "YouTube" in selected_sources and YOUTUBE_API_KEY:
             try:
                 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-                request = youtube.search().list(q=target_string, part='snippet', type='video', order='date', relevanceLanguage=l_params['yt'], maxResults=15)
+                request = youtube.search().list(q=target_string, part='snippet', type='video', order='date', relevanceLanguage=l_params['yt'], maxResults=12)
                 response = request.execute()
                 for item in response.get('items', []):
                     video_id = item['id'].get('videoId')
@@ -196,7 +198,7 @@ def fetch_target_data(target_string, brand_label):
             
     return entries
 
-# Execute API Scraping
+# Process Multi-Stream Architecture
 all_raw_mentions = fetch_target_data(active_query, active_query)
 
 if competitor_input:
@@ -218,13 +220,12 @@ elif sort_by == "Most Positive 🟢": target_brand_mentions = sorted(target_bran
 elif sort_by == "Most Negative 🔴": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['score'])
 
 # --- 4. MAIN DASHBOARD UI ---
-st.title(f"🧠 Intelligence Hub: {active_query}")
+st.title(f"🌍 Global Intelligence Hub: {active_query}")
 
-# METRICS PANEL
 st.markdown(f"""
 <div style="display: flex; gap: 16px; margin-bottom: 24px;">
     <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
-        <div class="metric-label">Active Monitoring Stream</div>
+        <div class="metric-label">Active Monitoring Stream Volume</div>
         <div class="metric-value" style="color: #3b82f6;">{len(target_brand_mentions)} Mentions</div>
     </div>
     <div class="modern-card metric-box" style="flex: 1; margin-bottom: 0;">
@@ -234,7 +235,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 🤖 AI BRIEFING ENGINE ---
+# --- 🤖 RESTORED AI BRIEFING ENGINE ---
 if target_brand_mentions:
     now = datetime.now()
     one_day_ago = now - pd.Timedelta(days=1)
@@ -252,8 +253,7 @@ if target_brand_mentions:
             words = [w.strip("?,.:;\"'()![]{}").lower() for w in m['title'].split()]
             w_words.extend([w for w in words if w not in ignore_words and len(w) > 3])
         w_counts = Counter(w_words).most_common(1)
-        if w_counts:
-            weekly_top_topic = w_counts[0][0].title()
+        if w_counts: weekly_top_topic = w_counts[0][0].title()
 
     if daily_mentions:
         d_words = []
@@ -341,7 +341,6 @@ if target_brand_mentions:
     start_idx = (st.session_state.current_page - 1) * items_per_page
     
     for item in target_brand_mentions[start_idx:start_idx + items_per_page]:
-        # Utilizing the new adaptive time formatter helper function
         formatted_age = format_time_ago(item['time'])
         st.markdown(f"""
         <div class="modern-card">
