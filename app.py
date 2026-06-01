@@ -9,7 +9,6 @@ from collections import Counter
 import nltk
 import urllib.parse
 import altair as alt
-import requests
 
 # --- AUTO-DOWNLOAD REQUIRED AI COMPONENTS ---
 try:
@@ -21,14 +20,14 @@ feedparser.USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWe
 YOUTUBE_API_KEY = "AIzaSyCB26TbgxGyRiWCwO0H_ptUQsH8tM0SpGQ"
 
 PLATFORM_ICONS = {
-    "Reddit": "🟧", "Google News": "📰", "Bing News": "🌐", 
-    "YouTube": "🟥", "Yahoo News": "🟣", "Hacker News": "👾", 
-    "Medium": "📝", "Flickr": "📷", "Blogs": "✍️", "Podcasts": "🎙️",
-    "EuroTech Hub": "🇪🇺"
+    "Reddit": "🟧", 
+    "Google News": "📰", 
+    "YouTube": "🟥", 
+    "Blogs & EuroTech": "✍️"
 }
 
 # --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Reolink Global Intelligence Hub", page_icon="🌍", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Reolink Global Marketing Hub", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -66,9 +65,9 @@ def format_time_ago(past_time):
 
 # --- 2. SIDEBAR CONTROLS ---
 with st.sidebar:
-    st.title("⚙️ Global Controls")
+    st.title("⚙️ Engine Controls")
     
-    st.subheader("🎯 Target Stream")
+    st.subheader("🎯 Active Target")
     active_query = st.radio("Select Target Query:", st.session_state.search_filters, label_visibility="collapsed")
     
     with st.expander("➕ Add Custom Search Filter"):
@@ -92,12 +91,11 @@ with st.sidebar:
     
     st.subheader("🗓️ Campaign Marker")
     event_date = st.date_input("Highlight event:", value=None)
-    event_name = st.text_input("Event Tag Name:", placeholder="EU Launch") if event_date else None
+    event_name = st.text_input("Event Tag Name:", placeholder="Global Launch") if event_date else None
 
     st.divider()
-    display_language = st.selectbox("🌍 Filter Region:", ["All Languages 🌍", "EN 🇺🇸", "FR 🇫🇷", "DE 🇩🇪"])
     sort_by = st.selectbox("🧠 Sort Target Feed By:", ["Newest First", "Most Positive 🟢", "Most Negative 🔴"])
-    selected_sources = st.multiselect("📡 Active Streams:", list(PLATFORM_ICONS.keys()), default=["Reddit", "Google News", "YouTube", "Podcasts", "Blogs", "EuroTech Hub"])
+    selected_sources = st.multiselect("📡 Active Streams:", list(PLATFORM_ICONS.keys()), default=["Reddit", "Google News", "YouTube", "Blogs & EuroTech"])
     
     auto_refresh = st.toggle("Enable Auto-Refresh", value=True)
     refresh_interval = st.slider("Refresh Interval (sec)", min_value=1800, max_value=7200, value=3600)
@@ -105,13 +103,7 @@ with st.sidebar:
         st.session_state.current_page = 1
         st.rerun()
 
-# --- 3. CROSS-BORDER PROCESSING ENGINE ---
-lang_configs = {
-    "EN 🇺🇸": {"gnews": "hl=en-US&gl=US&ceid=US:en", "bing": "mkt=en-US", "yt": "en", "yahoo": "news.search.yahoo.com"},
-    "FR 🇫🇷": {"gnews": "hl=fr&gl=FR&ceid=FR:fr", "bing": "mkt=fr-FR", "yt": "fr", "yahoo": "fr.news.search.yahoo.com"},
-    "DE 🇩🇪": {"gnews": "hl=de&gl=DE&ceid=DE:de", "bing": "mkt=de-DE", "yt": "de", "yahoo": "de.news.search.yahoo.com"}
-}
-
+# --- 3. CONSOLIDATED CORE-4 PROCESSING ENGINE ---
 def analyze_sentiment(text):
     score = TextBlob(text).sentiment.polarity
     if score > 0.15: return "🟢 Positive", score
@@ -123,101 +115,87 @@ def fetch_target_data(target_string, brand_label):
     query_no_space = target_string.replace(' ', '')
     entries = []
     
-    for lang_name, l_params in lang_configs.items():
-        # Core engines that inherently support language filtering
-        FEEDS = {
-            "Google News": f"https://news.google.com/rss/search?q={encoded_query}&{l_params['gnews']}",
-            "Bing News": f"https://www.bing.com/news/search?q={encoded_query}&format=rss&{l_params['bing']}",
-            "Yahoo News": f"https://{l_params['yahoo']}/rss?p={encoded_query}"
-        }
-        
-        # FIX: Quarantine English-dominant/no-filter APIs entirely to the EN loop
-        if lang_name == "EN 🇺🇸":
-            FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
-            FEEDS["Hacker News"] = f"https://hnrss.org/newest?q={encoded_query}"
-            FEEDS["Medium"] = f"https://medium.com/feed/tag/{query_no_space}"
-            FEEDS["Blogs"] = f"https://wordpress.com/tag/{query_no_space}/feed"
-            FEEDS["Flickr"] = f"https://www.flickr.com/services/feeds/photos_public.gne?tags={query_no_space}&format=rss_200"
+    # Unified Global Baseline Feeds (Fires requests without restricted language/country tags)
+    FEEDS = {}
+    if "Google News" in selected_sources:
+        FEEDS["Google News"] = f"https://news.google.com/rss/search?q={encoded_query}"
+    if "Reddit" in selected_sources:
+        FEEDS["Reddit"] = f"https://www.reddit.com/search.rss?q={encoded_query}&sort=new"
+    if "Blogs & EuroTech" in selected_sources:
+        FEEDS["WordPress Blogs"] = f"https://wordpress.com/tag/{query_no_space}/feed"
+        FEEDS["ComputerBase DE"] = f"https://www.computerbase.de/rss/news.xml"
+        FEEDS["Les Numériques FR"] = f"https://www.lesnumeriques.com/rss.xml"
 
-        # Inject Dedicated European High-Traffic Tech Aggregators
-        if lang_name == "DE 🇩🇪" and "EuroTech Hub" in selected_sources:
-            FEEDS["EuroTech Hub"] = f"https://www.computerbase.de/rss/news.xml"
+    # Scrape Configured RSS Endpoints
+    for internal_name, url in FEEDS.items():
+        try:
+            feed = feedparser.parse(url)
+            # Normalize display mapping for localized Euro sites
+            display_source = "Blogs & EuroTech" if "Blogs" in internal_name or "DE" in internal_name or "FR" in internal_name else internal_name
             
-        if lang_name == "FR 🇫🇷" and "EuroTech Hub" in selected_sources:
-            FEEDS["EuroTech Hub"] = f"https://www.lesnumeriques.com/rss.xml"
+            for entry in feed.entries:
+                # Downstream matching filter for high-volume localized tech boards
+                if ("DE" in internal_name or "FR" in internal_name) and target_string.lower() not in entry.title.lower():
+                    continue
+                    
+                dt = entry.get('published_parsed') or entry.get('updated_parsed')
+                author = entry.get('author', 'Independent Creator')
+                sentiment_label, sentiment_score = analyze_sentiment(entry.title)
+                
+                entries.append({
+                    "brand": brand_label, 
+                    "source": display_source, 
+                    "title": entry.title,
+                    "author": author, 
+                    "link": entry.link,
+                    "time": datetime(*dt[:6]) if dt else datetime.now(),
+                    "sentiment": sentiment_label, 
+                    "score": sentiment_score
+                })
+        except: pass 
 
-        for source, url in FEEDS.items():
-            if source in selected_sources:
-                try:
-                    feed = feedparser.parse(url)
-                    for entry in feed.entries:
-                        # Ensure generic Euro sites actually mention the target
-                        if source == "EuroTech Hub" and target_string.lower() not in entry.title.lower():
-                            continue
-                            
-                        dt = entry.get('published_parsed') or entry.get('updated_parsed')
-                        author = entry.get('author', 'Independent Creator')
-                        sentiment_label, sentiment_score = analyze_sentiment(entry.title)
-                        entries.append({
-                            "brand": brand_label, "source": source, "title": entry.title,
-                            "author": author, "link": entry.link,
-                            "time": datetime(*dt[:6]) if dt else datetime.now(),
-                            "sentiment": sentiment_label, "score": sentiment_score, "language": lang_name
-                        })
-                except: pass 
-
-        # Limit iTunes Podcasts to English loop as its regional search is unreliable via simple term matching
-        if "Podcasts" in selected_sources and lang_name == "EN 🇺🇸":
-            try:
-                podcast_url = f"https://itunes.apple.com/search?term={encoded_query}&entity=podcastEpisode&limit=10"
-                response = requests.get(podcast_url, timeout=5).json()
-                for result in response.get('results', []):
+    # Consolidated Global YouTube Engine (With Error Reporting Visible on Sidebar)
+    if "YouTube" in selected_sources and YOUTUBE_API_KEY:
+        try:
+            youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+            request = youtube.search().list(
+                q=target_string, 
+                part='snippet', 
+                type='video', 
+                order='date', 
+                maxResults=20
+            )
+            response = request.execute()
+            for item in response.get('items', []):
+                video_id = item['id'].get('videoId')
+                if video_id:
+                    pub_time = datetime.strptime(item['snippet']['publishedAt'], "%Y-%m-%dT%H:%M:%SZ")
+                    sentiment_label, sentiment_score = analyze_sentiment(item['snippet']['title'])
                     entries.append({
-                        "brand": brand_label, "source": "Podcasts",
-                        "title": f"{result.get('collectionName', 'Podcast')} - {result.get('trackName', 'Episode')}",
-                        "author": result.get('artistName', 'Host'),
-                        "link": result.get('trackViewUrl', ''),
-                        "time": datetime.strptime(result['releaseDate'], "%Y-%m-%dT%H:%M:%SZ"),
-                        "sentiment": "⚪ Neutral", "score": 0.0, "language": "EN 🇺🇸"
+                        "brand": brand_label, 
+                        "source": "YouTube", 
+                        "title": item['snippet']['title'],
+                        "author": item['snippet']['channelTitle'], 
+                        "link": f"https://www.youtube.com/watch?v={video_id}",
+                        "time": pub_time, 
+                        "sentiment": sentiment_label, 
+                        "score": sentiment_score
                     })
-            except: pass
-
-        # Global YouTube Engine (Supports localized relevance natively)
-        if "YouTube" in selected_sources and YOUTUBE_API_KEY:
-            try:
-                youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-                request = youtube.search().list(q=target_string, part='snippet', type='video', order='date', relevanceLanguage=l_params['yt'], maxResults=12)
-                response = request.execute()
-                for item in response.get('items', []):
-                    video_id = item['id'].get('videoId')
-                    if video_id:
-                        pub_time = datetime.strptime(item['snippet']['publishedAt'], "%Y-%m-%dT%H:%M:%SZ")
-                        sentiment_label, sentiment_score = analyze_sentiment(item['snippet']['title'])
-                        entries.append({
-                            "brand": brand_label, "source": "YouTube", "title": item['snippet']['title'],
-                            "author": item['snippet']['channelTitle'], "link": f"https://www.youtube.com/watch?v={video_id}",
-                            "time": pub_time, "sentiment": sentiment_label, "score": sentiment_score, "language": lang_name
-                        })
-            except: pass
+        except Exception as e:
+            st.sidebar.error(f"🔴 YouTube API Error: {str(e)}")
             
     return entries
 
 # Process Multi-Stream Architecture
-all_raw_mentions = fetch_target_data(active_query, active_query)
+mentions = fetch_target_data(active_query, active_query)
 
 if competitor_input:
     comp_mentions = fetch_target_data(competitor_input.strip(), competitor_input.strip())
-    all_raw_mentions.extend(comp_mentions)
+    mentions.extend(comp_mentions)
 
-# Deduplicate identical links
-unique_entries = {m['link']: m for m in all_raw_mentions}
-all_raw_mentions = list(unique_entries.values())
-
-# Apply active language filter to the feed
-if display_language != "All Languages 🌍":
-    mentions = [m for m in all_raw_mentions if m['language'] == display_language]
-else:
-    mentions = all_raw_mentions
+# Deduplicate identical links globally
+unique_entries = {m['link']: m for m in mentions}
+mentions = list(unique_entries.values())
 
 target_brand_mentions = [m for m in mentions if m['brand'] == active_query]
 
@@ -226,7 +204,7 @@ elif sort_by == "Most Positive 🟢": target_brand_mentions = sorted(target_bran
 elif sort_by == "Most Negative 🔴": target_brand_mentions = sorted(target_brand_mentions, key=lambda x: x['score'])
 
 # --- 4. MAIN DASHBOARD UI ---
-st.title(f"🌍 Global Intelligence Hub: {active_query}")
+st.title(f"🧠 Global Intelligence Hub: {active_query}")
 
 st.markdown(f"""
 <div style="display: flex; gap: 16px; margin-bottom: 24px;">
@@ -276,7 +254,7 @@ if target_brand_mentions:
             overall_sentiment = "positive 🟢" if avg_score > 0.15 else "negative 🔴" if avg_score < -0.15 else "neutral ⚪"
             
             st.info(f"### 🧠 AI Daily Briefing\n"
-                    f"**Today's Pulse:** Over the last 24 hours, chatter around **'{active_query}'** is heavily focused on the keyword topic **'{daily_top_topic}'** "
+                    f"**Today's Pulse:** Over the last 24 hours, global chatter around **'{active_query}'** is heavily focused on the keyword topic **'{daily_top_topic}'** "
                     f"(trending **{overall_sentiment}**). The primary narrative driver right now is: *\"{related_mentions[0]['title']}\"*\n\n"
                     f"**Weekly Macro Context:** Across the entire last 7 days, the dominant trending topic remains anchored on **'{weekly_top_topic}'**.")
         else:
@@ -353,7 +331,7 @@ if target_brand_mentions:
             <h3 class="card-title">{PLATFORM_ICONS.get(item['source'], "📌")} {item['title']}</h3>
             <span class="card-sentiment">{item['sentiment']}</span>
             <div class="card-bottom">
-                <span>👤 <strong>{item['author']}</strong> • 📅 {formatted_age} • via {item['source']} • {item['language']}</span>
+                <span>👤 <strong>{item['author']}</strong> • 📅 {formatted_age} • via {item['source']}</span>
                 <a href="{item['link']}" target="_blank" class="card-link">Open Link ↗</a>
             </div>
         </div>
