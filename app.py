@@ -10,7 +10,13 @@ try:
 except: 
     nltk.download('punkt', quiet=True)
 
-YOUTUBE_API_KEY = "AIzaSyCB26TbgxGyRiWCwO0H_ptUQsH8tM0SpGQ" 
+# Pulls the key securely from Streamlit's hidden vault
+try:
+    YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+except:
+    YOUTUBE_API_KEY = None
+    st.sidebar.warning("⚠️ YouTube API Key missing from Streamlit Secrets.")
+    
 DB_FILE = "mentions_archive.csv" 
 
 ICONS = {"Reddit": "🟧", "Google News": "📰", "YouTube": "🟥", "Blogs & EuroTech": "✍️"}
