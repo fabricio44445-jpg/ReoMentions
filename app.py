@@ -122,7 +122,7 @@ with st.sidebar:
         st.session_state.filters.remove(del_f); st.rerun()
 
     st.divider()
-    comp = st.text_input("⚔️ Competitor:", placeholder="e.g. Arlo")
+    comp = st.text_input("⚔️ Competitor:", placeholder="e.g. Arlo").strip()
     evt_date = st.date_input("🗓️ Event Date:", value=None)
     evt_name = st.text_input("Event Name:") if evt_date else None
 
@@ -135,7 +135,14 @@ with st.sidebar:
     if st.button("🔄 Force Data Sync"): st.cache_data.clear(); st.session_state.page = 1; st.rerun()
 
 # --- STEP 5: RUN THE APP ENGINE & LAY OUT MAIN HUB ---
-mentions = fetch_data([tgt, comp], srcs)
+raw_mentions = fetch_data([tgt, comp], srcs)
+
+# THE FIX: Only show data for the currently active target and competitor (ignore old database ghost entries)
+active_brands = [tgt]
+if comp:
+    active_brands.append(comp)
+mentions = [m for m in raw_mentions if m['brand'] in active_brands]
+
 tgt_mentions = sorted([m for m in mentions if m['brand'] == tgt], 
                       key=lambda x: x['time'] if "Newest" in sort_by else x['score'], 
                       reverse="Negative" not in sort_by)
@@ -174,28 +181,22 @@ if tgt_mentions:
     items_per_page, total_pages = 10, max(1, (len(tgt_mentions) + 9) // 10)
     st.session_state.page = min(st.session_state.page, total_pages)
     
-    # Calculate a moving window of 5 pages around the current page
     start_p = max(1, st.session_state.page - 2)
     end_p = min(total_pages, start_p + 4)
     p_range = list(range(start_p, end_p + 1))
     
-    # Create navigation columns flexibly based on how many page buttons exist
     cols = st.columns([1] + [0.5] * len(p_range) + [1])
     
-    # Previous Arrow
     if cols[0].button("⬅️", disabled=(st.session_state.page == 1), use_container_width=True): 
         st.session_state.page -= 1; st.rerun()
         
-    # Explicit Page Numbers
     for idx, p in enumerate(p_range):
         if cols[idx + 1].button(str(p), type="primary" if p == st.session_state.page else "secondary", use_container_width=True):
             st.session_state.page = p; st.rerun()
             
-    # Next Arrow
     if cols[-1].button("➡️", disabled=(st.session_state.page == total_pages), use_container_width=True): 
         st.session_state.page += 1; st.rerun()
 
-    # Loop through and render the 10 posts for the active page selection
     for m in tgt_mentions[(st.session_state.page-1)*items_per_page : st.session_state.page*items_per_page]:
         st.markdown(f"""<div class="modern-card">
             <h3 class="card-title">{ICONS.get(m['source'], "📌")} {m['title']}</h3>
