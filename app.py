@@ -1,3 +1,7 @@
+That is a classic data-leak bug, and I see exactly why it's happening!
+Right now, the sidebar checkboxes (srcs) control what the scraper looks for live, but when the app reads your local 30-day database file (mentions_archive.csv), it pulls out everything you've ever collected (Reddit, Google News, etc.) and dumps it onto the screen anyway. It completely forgets to apply your sidebar filter to the saved history.
+I have updated the main data filter in V10.7 below. Now, the app explicitly filters your local database against your sidebar selections so that if you choose only YouTube, the metrics, the timeline graph, and the stream feed will display only YouTube.
+Copy, paste, and Sync to fix the view!
 import streamlit as st, feedparser, pandas as pd, urllib.parse, altair as alt, time, nltk, os
 from datetime import datetime, timedelta
 from textblob import TextBlob
@@ -10,7 +14,6 @@ try:
 except: 
     nltk.download('punkt', quiet=True)
 
-# Pulls the key securely from Streamlit's hidden vault
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 except:
@@ -18,7 +21,6 @@ except:
     st.sidebar.warning("⚠️ YouTube API Key missing from Streamlit Secrets.")
     
 DB_FILE = "mentions_archive.csv" 
-
 ICONS = {"Reddit": "🟧", "Google News": "📰", "YouTube": "🟥", "Blogs & EuroTech": "✍️"}
 
 st.set_page_config(page_title="Global Marketing Hub", page_icon="🧠", layout="wide")
@@ -31,14 +33,16 @@ st.markdown("""
     .card-bottom { display: flex; justify-content: space-between; font-size: 0.85rem; color: #475569 !important; } 
     .card-link { color: #2563eb !important; text-decoration: none; font-weight: bold; } 
     .metric-label { font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 600; margin-bottom: 4px; }
-    .metric-val { font-size: 2rem; font-weight: bold; }
+    .metric-val { font-size: 2rem; font-weight: bold; color: #0f172a !important;}
+    .briefing-box { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 0 8px 8px 0; margin-bottom: 16px; }
+    .briefing-header { font-size: 1.1rem; font-weight: bold; color: #1e3a8a; margin-bottom: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
-for k, v in {"filters": ["Reolink", "omvi", "Magicam"], "page": 1}.items():
+for k, v in {"filters": ["Reolink", "reolink omvi", "Magicam"], "page": 1}.items():
     st.session_state.setdefault(k, v)
 
-# --- STEP 2: SMALL HELPER OPERATIONS ---
+# --- STEP 2: ADVANCED ANALYTICS HELPERS ---
 def get_sentiment(text):
     s = TextBlob(text).sentiment.polarity
     return ("🟢 Positive", s) if s > 0.15 else ("🔴 Negative", s) if s < -0.15 else ("⚪ Neutral", s)
@@ -47,10 +51,22 @@ def time_ago(dt):
     secs = int((datetime.now() - dt).total_seconds())
     return "just now" if secs < 60 else f"{secs//60}m ago" if secs < 3600 else f"{secs//3600}h ago" if secs < 86400 else f"{secs//86400}d ago"
 
-def get_top_topic(mentions):
-    ignore = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'this', 'new', 'omvi', 'magicam'}
+def analyze_dataset(mentions):
+    if not mentions: return None
+    ignore = {'reolink', 'camera', 'cameras', 'video', 'security', 'http', 'https', 'com', 'www', 'reddit', 'the', 'and', 'for', 'this', 'new', 'omvi', 'magicam', 'with', 'from'}
     words = [w.strip("?,.:;\"'()![]{}").lower() for m in mentions for w in m['title'].split() if w.strip("?,.:;\"'()![]{}").lower() not in ignore and len(w)>3]
-    return Counter(words).most_common(1)[0][0].title() if words else "General"
+    top_3 = [w[0].title() for w in Counter(words).most_common(3)]
+    
+    pos = sum(1 for m in mentions if '🟢' in m['sentiment'])
+    neg = sum(1 for m in mentions if '🔴' in m['sentiment'])
+    neu = sum(1 for m in mentions if '⚪' in m['sentiment'])
+    total = len(mentions)
+    
+    return {
+        "topics": top_3 if top_3 else ["General Feed"],
+        "sentiment": f"🟢 {int((pos/total)*100)}% | ⚪ {int((neu/total)*100)}% | 🔴 {int((neg/total)*100)}%",
+        "drivers": [m['title'] for m in mentions[:2]]
+    }
 
 # --- STEP 3: THE SCRAPING ENGINE (WITH LOCAL DATA TRAP) ---
 @st.cache_data(ttl=900)
@@ -145,17 +161,17 @@ with st.sidebar:
 raw_mentions = fetch_data([tgt, comp], srcs)
 
 active_brands = [tgt]
-if comp:
-    active_brands.append(comp)
-mentions = [m for m in raw_mentions if m['brand'] in active_brands]
+if comp: active_brands.append(comp)
+
+# FIX: Added 'and m['source'] in srcs' to ensure the active view filters out unwanted stream platforms instantly
+mentions = [m for m in raw_mentions if m['brand'] in active_brands and m['source'] in srcs]
 
 tgt_mentions = sorted([m for m in mentions if m['brand'] == tgt], 
                       key=lambda x: x['time'] if "Newest" in sort_by else x['score'], 
                       reverse="Negative" not in sort_by)
 
-st.title(f"🧠 Hub: {tgt}")
+st.title(f"🧠 Intelligence Hub: {tgt}")
 
-# --- RESTORED BIG METRICS ROW ---
 st.markdown(f"""
 <div style="display: flex; gap: 16px; margin-bottom: 24px; margin-top: 16px;">
     <div class="modern-card" style="flex: 1; margin-bottom: 0;">
@@ -167,23 +183,53 @@ st.markdown(f"""
         <div class="metric-val" style="color: #ef4444 !important;">{len([m for m in mentions if m['brand']==comp]) if comp else 0}</div>
     </div>
     <div class="modern-card" style="flex: 1; margin-bottom: 0;">
-        <div class="metric-label">Total Data Points Stored</div>
+        <div class="metric-label">30-Day Data Points Stored</div>
         <div class="metric-val" style="color: #10b981 !important;">{len(mentions)}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
+# --- ELABORATE AI BRIEFING ---
 if tgt_mentions:
     now = datetime.now()
     d_mentions = [m for m in tgt_mentions if m['time'] >= now - timedelta(days=1)]
     w_mentions = [m for m in tgt_mentions if m['time'] >= now - timedelta(days=7)]
-    d_topic, w_topic = get_top_topic(d_mentions), get_top_topic(w_mentions)
     
-    if d_mentions:
-        driver = next((m for m in d_mentions if d_topic.lower() in m['title'].lower()), d_mentions[0])
-        st.info(f"### 🧠 AI Daily Briefing\n**Today's Pulse:** Focused on **'{d_topic}'** ({driver['sentiment']}). Driver: *\"{driver['title']}\"*\n\n**Weekly Macro:** Anchored on **'{w_topic}'**.")
-    else:
-        st.info(f"### 🧠 AI Daily Briefing\nStable today. Weekly macro focus: **'{w_topic}'**.")
+    d_stats = analyze_dataset(d_mentions)
+    w_stats = analyze_dataset(w_mentions)
+    
+    st.markdown("### 🧠 AI Executive Briefing")
+    cols = st.columns(2)
+    
+    with cols[0]:
+        if d_stats:
+            st.markdown(f"""
+            <div class="briefing-box">
+                <div class="briefing-header">⏱️ 24-Hour Pulse</div>
+                <b>Trending Keywords:</b> {', '.join(d_stats['topics'])}<br>
+                <b>Sentiment Split:</b> {d_stats['sentiment']}<br><br>
+                <b>Primary Drivers:</b>
+                <ul style="margin-top: 4px; padding-left: 20px; font-size: 0.9rem;">
+                    <li><i>"{d_stats['drivers'][0]}"</i></li>
+                    {f"<li><i>'{d_stats['drivers'][1]}'</i></li>" if len(d_stats['drivers']) > 1 else ""}
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("No new mentions captured in the last 24 hours for this keyword within selected streams.")
+            
+    with cols[1]:
+        if w_stats:
+            st.markdown(f"""
+            <div class="briefing-box" style="border-left-color: #8b5cf6; background: #f3f4f6;">
+                <div class="briefing-header" style="color: #4c1d95;">📅 7-Day Macro Trend</div>
+                <b>Dominant Themes:</b> {', '.join(w_stats['topics'])}<br>
+                <b>Overall Sentiment:</b> {w_stats['sentiment']}<br><br>
+                <b>Macro Volume:</b> {len(w_mentions)} mentions tracked this week.
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("Insufficient 7-day data to calculate macro trends.")
 
 # --- 30-DAY EXPLICIT NUMBER GRAPH ---
 if mentions:
@@ -194,18 +240,9 @@ if mentions:
     
     if not df.empty:
         chart_data = df.groupby(['Date', 'brand']).size().reset_index(name='Mentions')
-        
-        base = alt.Chart(chart_data).encode(
-            x=alt.X('Date:T', title='Date'),
-            y=alt.Y('Mentions:Q', title='Number of Mentions'),
-            color=alt.Color('brand:N', title='Brand')
-        )
-        
+        base = alt.Chart(chart_data).encode(x=alt.X('Date:T', title='Date'), y=alt.Y('Mentions:Q', title='Number of Mentions'), color=alt.Color('brand:N', title='Brand'))
         line = base.mark_line(point=True)
-        text = base.mark_text(
-            align='center', baseline='bottom', dy=-10, fontWeight='bold', fontSize=12
-        ).encode(text='Mentions:Q')
-        
+        text = base.mark_text(align='center', baseline='bottom', dy=-10, fontWeight='bold', fontSize=12).encode(text='Mentions:Q')
         chart = line + text
         
         if evt_date:
@@ -226,15 +263,11 @@ if tgt_mentions:
     
     cols = st.columns([1] + [0.5] * len(p_range) + [1])
     
-    if cols[0].button("⬅️", disabled=(st.session_state.page == 1), use_container_width=True): 
-        st.session_state.page -= 1; st.rerun()
-        
+    if cols[0].button("⬅️", disabled=(st.session_state.page == 1), use_container_width=True): st.session_state.page -= 1; st.rerun()
     for idx, p in enumerate(p_range):
         if cols[idx + 1].button(str(p), type="primary" if p == st.session_state.page else "secondary", use_container_width=True):
             st.session_state.page = p; st.rerun()
-            
-    if cols[-1].button("➡️", disabled=(st.session_state.page == total_pages), use_container_width=True): 
-        st.session_state.page += 1; st.rerun()
+    if cols[-1].button("➡️", disabled=(st.session_state.page == total_pages), use_container_width=True): st.session_state.page += 1; st.rerun()
 
     for m in tgt_mentions[(st.session_state.page-1)*items_per_page : st.session_state.page*items_per_page]:
         st.markdown(f"""<div class="modern-card">
