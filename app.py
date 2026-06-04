@@ -30,7 +30,8 @@ st.markdown("""
     .card-title { margin: 0 0 8px 0; font-size: 1.15rem; color: #0f172a !important; font-weight: 600; } 
     .card-bottom { display: flex; justify-content: space-between; font-size: 0.85rem; color: #475569 !important; } 
     .card-link { color: #2563eb !important; text-decoration: none; font-weight: bold; } 
-    .metric-val { font-size: 2rem; font-weight: bold; color: #0f172a !important; }
+    .metric-label { font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 600; margin-bottom: 4px; }
+    .metric-val { font-size: 2rem; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -143,7 +144,6 @@ with st.sidebar:
 # --- STEP 5: RUN THE APP ENGINE & LAY OUT MAIN HUB ---
 raw_mentions = fetch_data([tgt, comp], srcs)
 
-# THE FIX: Only show data for the currently active target and competitor (ignore old database ghost entries)
 active_brands = [tgt]
 if comp:
     active_brands.append(comp)
@@ -154,7 +154,24 @@ tgt_mentions = sorted([m for m in mentions if m['brand'] == tgt],
                       reverse="Negative" not in sort_by)
 
 st.title(f"🧠 Hub: {tgt}")
-st.markdown(f"**Target Volume:** {len(tgt_mentions)} | **Competitor Volume:** {len([m for m in mentions if m['brand']==comp])}")
+
+# --- RESTORED BIG METRICS ROW ---
+st.markdown(f"""
+<div style="display: flex; gap: 16px; margin-bottom: 24px; margin-top: 16px;">
+    <div class="modern-card" style="flex: 1; margin-bottom: 0;">
+        <div class="metric-label">Total {tgt} Mentions</div>
+        <div class="metric-val" style="color: #3b82f6 !important;">{len(tgt_mentions)}</div>
+    </div>
+    <div class="modern-card" style="flex: 1; margin-bottom: 0;">
+        <div class="metric-label">Competitor ({comp or 'None'})</div>
+        <div class="metric-val" style="color: #ef4444 !important;">{len([m for m in mentions if m['brand']==comp]) if comp else 0}</div>
+    </div>
+    <div class="modern-card" style="flex: 1; margin-bottom: 0;">
+        <div class="metric-label">Total Data Points Stored</div>
+        <div class="metric-val" style="color: #10b981 !important;">{len(mentions)}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 if tgt_mentions:
     now = datetime.now()
@@ -168,6 +185,7 @@ if tgt_mentions:
     else:
         st.info(f"### 🧠 AI Daily Briefing\nStable today. Weekly macro focus: **'{w_topic}'**.")
 
+# --- 30-DAY EXPLICIT NUMBER GRAPH ---
 if mentions:
     st.markdown("### 📊 30-Day Timeline")
     df = pd.DataFrame(mentions)
@@ -175,10 +193,25 @@ if mentions:
     df = df[df['Date'] >= (datetime.now().date() - timedelta(days=30))]
     
     if not df.empty:
-        chart = alt.Chart(df.groupby(['Date', 'brand']).size().reset_index(name='Vol')).encode(x='Date:T', y='Vol:Q', color='brand:N').mark_line(point=True)
+        chart_data = df.groupby(['Date', 'brand']).size().reset_index(name='Mentions')
+        
+        base = alt.Chart(chart_data).encode(
+            x=alt.X('Date:T', title='Date'),
+            y=alt.Y('Mentions:Q', title='Number of Mentions'),
+            color=alt.Color('brand:N', title='Brand')
+        )
+        
+        line = base.mark_line(point=True)
+        text = base.mark_text(
+            align='center', baseline='bottom', dy=-10, fontWeight='bold', fontSize=12
+        ).encode(text='Mentions:Q')
+        
+        chart = line + text
+        
         if evt_date:
             rule = alt.Chart(pd.DataFrame({'Date': [pd.to_datetime(evt_date)]})).mark_rule(color='#10b981', strokeDash=[5,5]).encode(x='Date:T')
             chart += rule + rule.mark_text(text=f"🚀 {evt_name}", align='left', dx=5, dy=-120) if evt_name else rule
+            
         st.altair_chart(chart, use_container_width=True)
 
 # --- THE STREAMS FEED WITH PAGE NUMBER BUTTONS ---
