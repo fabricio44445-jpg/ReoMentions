@@ -1,7 +1,3 @@
-That is a classic data-leak bug, and I see exactly why it's happening!
-Right now, the sidebar checkboxes (srcs) control what the scraper looks for live, but when the app reads your local 30-day database file (mentions_archive.csv), it pulls out everything you've ever collected (Reddit, Google News, etc.) and dumps it onto the screen anyway. It completely forgets to apply your sidebar filter to the saved history.
-I have updated the main data filter in V10.7 below. Now, the app explicitly filters your local database against your sidebar selections so that if you choose only YouTube, the metrics, the timeline graph, and the stream feed will display only YouTube.
-Copy, paste, and Sync to fix the view!
 import streamlit as st, feedparser, pandas as pd, urllib.parse, altair as alt, time, nltk, os
 from datetime import datetime, timedelta
 from textblob import TextBlob
