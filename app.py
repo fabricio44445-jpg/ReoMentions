@@ -30,8 +30,10 @@ st.markdown("""
     .card-link { color: #2563eb !important; text-decoration: none; font-weight: bold; } 
     .metric-label { font-size: 0.85rem; text-transform: uppercase; color: #64748b; font-weight: 600; margin-bottom: 4px; }
     .metric-val { font-size: 2rem; font-weight: bold; color: #0f172a !important;}
-    .briefing-box { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 0 8px 8px 0; margin-bottom: 16px; }
-    .briefing-header { font-size: 1.1rem; font-weight: bold; color: #1e3a8a; margin-bottom: 8px; }
+    
+    /* FIX: Added explicit dark text color to the briefing boxes to prevent dark-mode white-outs */
+    .briefing-box { background: #eff6ff; color: #0f172a !important; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 0 8px 8px 0; margin-bottom: 16px; }
+    .briefing-header { font-size: 1.1rem; font-weight: bold; color: #1e3a8a !important; margin-bottom: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -159,7 +161,6 @@ raw_mentions = fetch_data([tgt, comp], srcs)
 active_brands = [tgt]
 if comp: active_brands.append(comp)
 
-# FIX: Added 'and m['source'] in srcs' to ensure the active view filters out unwanted stream platforms instantly
 mentions = [m for m in raw_mentions if m['brand'] in active_brands and m['source'] in srcs]
 
 tgt_mentions = sorted([m for m in mentions if m['brand'] == tgt], 
@@ -218,7 +219,7 @@ if tgt_mentions:
         if w_stats:
             st.markdown(f"""
             <div class="briefing-box" style="border-left-color: #8b5cf6; background: #f3f4f6;">
-                <div class="briefing-header" style="color: #4c1d95;">📅 7-Day Macro Trend</div>
+                <div class="briefing-header" style="color: #4c1d95 !important;">📅 7-Day Macro Trend</div>
                 <b>Dominant Themes:</b> {', '.join(w_stats['topics'])}<br>
                 <b>Overall Sentiment:</b> {w_stats['sentiment']}<br><br>
                 <b>Macro Volume:</b> {len(w_mentions)} mentions tracked this week.
